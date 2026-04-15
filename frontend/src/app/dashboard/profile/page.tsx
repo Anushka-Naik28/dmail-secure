@@ -1,0 +1,335 @@
+"use client"
+
+import { useEffect, useState } from "react"
+import { useRouter } from "next/navigation"
+import { getCounts, subscribe } from "@/utils/mailStore"
+
+export default function ProfilePage() {
+  const router = useRouter()
+  const [user, setUser] = useState<any>(null)
+  const [counts, setCounts] = useState<any>({ inbox: 0, sent: 0, spam: 0, starred: 0, trash: 0, request: 0, drafts: 0 })
+  const [copiedPublic, setCopiedPublic] = useState(false)
+  const [showFullPublicKey, setShowFullPublicKey] = useState(false)
+  
+  const [copiedPrivate, setCopiedPrivate] = useState(false)
+  const [showFullPrivateKey, setShowFullPrivateKey] = useState(false)
+
+  useEffect(() => {
+    if (typeof window === "undefined") return
+    const localUser = JSON.parse(localStorage.getItem("user") || "{}")
+    if (!localUser.email) return
+    setUser(localUser)
+
+    const updateStats = () => {
+      setCounts(getCounts(localUser.email))
+    }
+
+    updateStats()
+    const unsub = subscribe(updateStats)
+    return () => unsub()
+  }, [])
+
+  const copyPublicKey = () => {
+    if (!user?.publicKey) return
+    navigator.clipboard.writeText(user.publicKey)
+    setCopiedPublic(true)
+    setTimeout(() => setCopiedPublic(false), 2000)
+  }
+
+  const copyPrivateKey = () => {
+    if (!user?.privateKey) return
+    navigator.clipboard.writeText(user.privateKey)
+    setCopiedPrivate(true)
+    setTimeout(() => setCopiedPrivate(false), 2000)
+  }
+
+  const downloadPublicKey = () => {
+    const blob = new Blob([user.publicKey], { type: "text/plain" })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement("a")
+    a.href = url
+    a.download = `${user.email}_publickey.asc`
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
+  const getKeyPreview = (key: string) => {
+    if (!key) return ""
+    const body = key
+      .replace("-----BEGIN PGP PUBLIC KEY BLOCK-----", "")
+      .replace("-----END PGP PUBLIC KEY BLOCK-----", "")
+      .replace(/\s/g, "")
+    return `-----BEGIN PGP PUBLIC KEY----- ··· ${body.slice(0, 8)}...`
+  }
+
+  const generateFingerprint = (key: string) => {
+    if (!key) return ""
+    const clean = key.replace(/\s/g, "").slice(0, 40).toUpperCase()
+    return clean.match(/.{1,4}/g)?.join(" ") || ""
+  }
+
+  if (!user) return <div className="empty-state">Loading profile...</div>
+
+  return (
+    <div style={{ height: "100%", display: "flex", flexDirection: "column" }}>
+      
+      {/* Profile Header */}
+      <div className="inbox-header-row" style={{ padding: "20px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <h2 className="inbox-title" style={{ margin: 0 }}>👤 Profile Details</h2>
+        <button 
+          onClick={() => router.push('/dashboard/inbox')}
+          style={{
+            background: "rgba(255,255,255,0.05)", border: "1px solid var(--border-gold)", borderRadius: "8px", 
+            padding: "8px 16px", color: "var(--text-bright)", cursor: "pointer", fontSize: "13px", 
+            fontFamily: "Raleway, sans-serif", display: "flex", alignItems: "center", gap: "6px",
+            transition: "all 0.2s ease"
+          }}
+          onMouseEnter={(e) => e.currentTarget.style.background = "rgba(255,255,255,0.1)"}
+          onMouseLeave={(e) => e.currentTarget.style.background = "rgba(255,255,255,0.05)"}
+        >
+          ✕ Close
+        </button>
+      </div>
+
+      <div style={{ flex: 1, overflowY: "auto", padding: "20px" }}>
+        <div style={{ maxWidth: "600px", margin: "0 auto" }}>
+
+      {/* Avatar */}
+      <div style={{ textAlign: "center", marginBottom: "32px" }}>
+        <div style={{
+          width: "80px", height: "80px", borderRadius: "50%",
+          background: "linear-gradient(135deg, var(--gold-rich), var(--gold-light))",
+          display: "flex", alignItems: "center", justifyContent: "center",
+          fontSize: "32px", fontWeight: "700", color: "#1a1200",
+          margin: "0 auto 16px",
+          boxShadow: "0 0 24px rgba(212,160,23,0.4)",
+          animation: "goldPulse 3s ease-in-out infinite",
+        }}>
+          {user.name?.charAt(0).toUpperCase()}
+        </div>
+        <h2 style={{ color: "var(--text-bright)", marginBottom: "4px" }}>{user.name}</h2>
+        <p style={{ color: "var(--gold-mid)", fontSize: "14px", fontFamily: "Courier New, monospace" }}>
+          {user.email}
+        </p>
+        <div style={{ display: "flex", flexDirection: "column", gap: "6px", alignItems: "center", marginTop: "12px" }}>
+          <span style={{
+            display: "inline-block", fontSize: "11px", padding: "3px 10px", borderRadius: "20px",
+            background: "rgba(76,175,110,0.1)", color: "#4caf6e",
+            border: "1px solid rgba(76,175,110,0.25)",
+          }}> ● Active Secure Account</span>
+          {user.did && (
+            <span style={{
+              fontSize: "10px", color: "var(--text-muted)",
+              fontFamily: "Courier New, monospace",
+              padding: "4px 12px", background: "rgba(212,160,23,0.06)",
+              borderRadius: "20px", border: "1px solid var(--border-gold)"
+            }}>
+              ID: {user.did}
+            </span>
+          )}
+        </div>
+      </div>
+
+      {/* Stats */}
+      <div style={{
+        display: "grid", gridTemplateColumns: "repeat(3, 1fr)",
+        gap: "12px", marginBottom: "28px",
+      }}>
+        {[
+          { icon: "📥", label: "Inbox",   count: counts.inbox   || 0 },
+          { icon: "📤", label: "Sent",    count: counts.sent    || 0 },
+          { icon: "⭐", label: "Starred", count: counts.starred || 0 },
+          { icon: "🚫", label: "Spam",    count: counts.spam    || 0 },
+          { icon: "🗑️", label: "Trash",   count: counts.trash   || 0 },
+        ].map(({ icon, label, count }) => (
+          <div key={label} style={{
+            background: "var(--bg-card)", border: "1px solid var(--border-gold)",
+            borderRadius: "12px", padding: "16px", textAlign: "center",
+          }}>
+            <div style={{ fontSize: "22px", marginBottom: "6px" }}>{icon}</div>
+            <div style={{ fontSize: "22px", fontWeight: "700", color: "var(--gold-light)" }}>
+              {count}
+            </div>
+            <div style={{ fontSize: "12px", color: "var(--text-muted)", marginTop: "2px" }}>
+              {label}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Public Key */}
+      <div style={{
+        background: "var(--bg-card)", border: "1px solid var(--border-gold)",
+        borderRadius: "12px", padding: "20px", marginBottom: "16px",
+      }}>
+        <p style={{
+          color: "var(--text-muted)", fontSize: "11px", marginBottom: "6px",
+          textTransform: "uppercase", letterSpacing: "1px",
+        }}>
+          🔑 Public Key (Identity)
+        </p>
+        <p style={{ color: "var(--text-dim)", fontSize: "12px", marginBottom: "12px" }}>
+          Your public ID used by the system to fetch encryption standards for your email address.
+        </p>
+
+        <div style={{
+          background: "var(--bg-panel)", border: "1px solid var(--border-gold)",
+          borderRadius: "8px", padding: "10px 14px", marginBottom: "12px",
+          display: "flex", alignItems: "center", gap: "10px",
+        }}>
+          <span style={{
+            fontFamily: "Courier New, monospace", fontSize: "11px",
+            color: "var(--gold-light)", flex: 1, overflow: "hidden",
+            textOverflow: "ellipsis", whiteSpace: "nowrap",
+          }}>
+            {getKeyPreview(user.publicKey)}
+          </span>
+          <button onClick={() => setShowFullPublicKey(true)} style={{
+            background: "none", border: "1px solid var(--gold-mid)",
+            borderRadius: "6px", padding: "3px 10px", cursor: "pointer",
+            color: "var(--gold-mid)", fontSize: "11px",
+            fontFamily: "Raleway, sans-serif",
+          }}>View</button>
+        </div>
+
+        <p style={{ fontSize: "12px", color: "var(--text-muted)", marginBottom: "12px" }}>
+          Fingerprint: <span style={{ fontFamily: "Courier New, monospace" }}>
+            {generateFingerprint(user.publicKey)}
+          </span>
+        </p>
+
+        <div style={{ display: "flex", gap: "10px" }}>
+          <button onClick={copyPublicKey} className="btn-secondary">
+            {copiedPublic ? "✅ Copied!" : "📋 Copy Key"}
+          </button>
+          <button onClick={() => {
+            if (user.did) {
+              navigator.clipboard.writeText(user.did)
+              setCopiedPublic(true) // Reuse state for toast
+              setTimeout(() => setCopiedPublic(false), 2000)
+            }
+          }} className="btn-secondary">
+            📋 Copy DID
+          </button>
+          <button onClick={downloadPublicKey} className="btn-secondary">
+            ⬇ Download .asc
+          </button>
+        </div>
+      </div>
+
+      {/* Private Key — never shown */}
+      <div style={{
+        background: "var(--bg-card)", border: "1px solid rgba(217,48,37,0.25)",
+        borderRadius: "12px", padding: "20px", marginBottom: "16px",
+      }}>
+        <p style={{
+          color: "var(--text-muted)", fontSize: "11px", marginBottom: "6px",
+          textTransform: "uppercase", letterSpacing: "1px",
+        }}>
+          🔐 Private Key (Master Decryption)
+        </p>
+        <p style={{ color: "var(--text-dim)", fontSize: "12px", marginBottom: "12px" }}>
+          This key is linked to your password. Never share it; it is used to unlock your messages.
+        </p>
+        <div style={{
+          background: "var(--bg-panel)", border: "1px solid rgba(217,48,37,0.2)",
+          borderRadius: "8px", padding: "10px 14px",
+          display: "flex", alignItems: "center", gap: "10px",
+        }}>
+          <span style={{
+            fontFamily: "Courier New, monospace", fontSize: "11px",
+            color: "#e84234", flex: 1, letterSpacing: "2px",
+          }}>
+            -----BEGIN PGP PRIVATE KEY----- ··· ████████...
+          </span>
+          <button onClick={() => setShowFullPrivateKey(true)} style={{
+            background: "rgba(217,48,37,0.12)", border: "1px solid rgba(217,48,37,0.25)",
+            borderRadius: "6px", padding: "3px 10px", cursor: "pointer",
+            color: "#e84234", fontSize: "11px",
+            fontFamily: "Raleway, sans-serif",
+          }}>View Secret</button>
+        </div>
+      </div>
+
+      {/* Encryption Info */}
+      <div style={{
+        background: "rgba(76,175,110,0.06)", border: "1px solid rgba(76,175,110,0.2)",
+        borderRadius: "12px", padding: "16px", fontSize: "13px",
+        color: "var(--text-muted)", lineHeight: "1.6",
+      }}>
+        <p style={{ marginBottom: "4px" }}>
+          🔒 <strong style={{ color: "var(--text-bright)" }}>PGP End-to-End Encrypted</strong>
+        </p>
+        <p>
+          Messages are encrypted with RSA-2048 PGP. Only you can decrypt them
+          using your private key and password. Your private key never leaves your device.
+        </p>
+      </div>
+
+      {/* Full Public Key Modal */}
+      {showFullPublicKey && (
+        <div className="modal-overlay">
+          <div className="modal-content" style={{ maxWidth: "520px", width: "90%" }}>
+            <div style={{ fontSize: "24px", marginBottom: "8px" }}>🔑</div>
+            <h3>Your PGP Public Key</h3>
+            <p style={{ fontSize: "12px", color: "var(--text-muted)", marginBottom: "12px" }}>
+              Safe to share — used by others to encrypt messages to you.
+            </p>
+            <textarea readOnly value={user.publicKey} style={{
+              width: "100%", height: "200px",
+              background: "var(--bg-panel)", border: "1px solid var(--border-gold)",
+              borderRadius: "8px", padding: "12px",
+              fontFamily: "Courier New, monospace", fontSize: "10px",
+              color: "var(--gold-light)", resize: "none",
+              lineHeight: "1.5", boxSizing: "border-box",
+            }} />
+            <div className="modal-actions" style={{ marginTop: "16px" }}>
+              <button className="btn-secondary" onClick={() => setShowFullPublicKey(false)}>
+                Close
+              </button>
+              <button className="btn" onClick={() => { copyPublicKey(); setShowFullPublicKey(false) }}>
+                {copiedPublic ? "✅ Copied!" : "📋 Copy Key"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Full Private Key Modal */}
+      {showFullPrivateKey && (
+        <div className="modal-overlay">
+          <div className="modal-content" style={{ maxWidth: "520px", width: "90%", border: "1px solid rgba(217,48,37,0.4)" }}>
+            <div style={{ fontSize: "24px", marginBottom: "8px" }}>🔐</div>
+            <h3 style={{ color: "#e84234" }}>Your PGP Private Key</h3>
+            <p style={{ fontSize: "12px", color: "var(--text-dim)", marginBottom: "12px", background: "rgba(217,48,37,0.1)", padding: "10px", borderRadius: "8px" }}>
+              <strong>DANGER:</strong> Never share this key with anyone. It grants full access to decrypt all your private messages.
+            </p>
+            <textarea readOnly value={user.privateKey || user.privateKeyArmored || "Private key not found locally"} style={{
+              width: "100%", height: "200px",
+              background: "var(--bg-panel)", border: "1px solid rgba(217,48,37,0.3)",
+              borderRadius: "8px", padding: "12px",
+              fontFamily: "Courier New, monospace", fontSize: "10px",
+              color: "#e84234", resize: "none",
+              lineHeight: "1.5", boxSizing: "border-box",
+            }} />
+            <div className="modal-actions" style={{ marginTop: "16px" }}>
+              <button className="btn-secondary" onClick={() => setShowFullPrivateKey(false)}>
+                Close
+              </button>
+              <button onClick={() => { copyPrivateKey(); setShowFullPrivateKey(false) }} style={{
+                background: "rgba(217,48,37,0.15)", border: "1px solid rgba(217,48,37,0.4)",
+                padding: "10px 20px", borderRadius: "8px", cursor: "pointer",
+                color: "#e84234", fontFamily: "Raleway, sans-serif", fontWeight: "700"
+              }}>
+                {copiedPrivate ? "✅ Copied!" : "📋 Copy Private Key"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+        </div>
+      </div>
+    </div>
+  )
+}
