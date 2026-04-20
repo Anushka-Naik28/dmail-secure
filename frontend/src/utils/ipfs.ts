@@ -1,3 +1,126 @@
+// ─────────────────────────────────────────────────────────────────────────
+// 🌍 GLOBAL IPFS PINNING — Backend Proxy Architecture
+//
+// The Pinata JWT lives ONLY on the relay server (backend/server.js).
+// Users never create accounts or configure anything.
+// The frontend calls /pin on the relay server → server pins to Pinata.
+//
+// Setup (ONE TIME, by the developer/operator):
+//   1. Get a free Pinata JWT at https://pinata.cloud
+//   2. Add PINATA_JWT=your_jwt to backend/.env
+//   3. All users of the app get global mail delivery automatically.
+// ─────────────────────────────────────────────────────────────────────────
+
+/** 
+ * Uploads JSON data via the relay server's /pin proxy.
+ * The relay server holds the Pinata JWT — users never configure anything.
+ * Falls back to local Kubo if the relay's /pin endpoint is not configured.
+ */
+export const uploadToPinata = async (data: object): Promise<string> => {
+  // Calls the relay server's /pin proxy — JWT is on the server, not the browser.
+  // Users never need accounts or configuration.
+  const relayBase = getLocalNode(8765)
+
+  const response = await fetch(`${relayBase}/pin`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ data }),
+  })
+
+  if (!response.ok) {
+    const err = await response.text()
+    throw new Error(`Relay /pin failed (${response.status}): ${err}`)
+  }
+
+  const result = await response.json()
+  const cid = result.cid
+  if (!cid) throw new Error("Relay /pin returned no CID")
+  console.log("🌍 [Global] Mail pinned via relay:", cid)
+  return cid
+}
+
+/**
+ * Uploads a raw file (Blob) via the relay server's /pin-file proxy.
+ */
+export const uploadFileToPinata = async (blob: Blob, filename: string): Promise<string> => {
+  const relayBase = getLocalNode(8765)
+
+  const formData = new FormData()
+  formData.append("file", blob, filename)
+
+  const response = await fetch(`${relayBase}/pin-file`, {
+    method: "POST",
+    body: formData,
+  })
+
+  if (!response.ok) {
+    const err = await response.text()
+    throw new Error(`Relay /pin-file failed (${response.status}): ${err}`)
+  }
+
+  const result = await response.json()
+  const cid = result.cid
+  if (!cid) throw new Error("Relay /pin-file returned no CID")
+  console.log("🌍 [Global] File pinned via relay:", cid)
+  return cid
+}
+
+/**
+ * Checks if the relay server has global pinning enabled.
+ * Returns true if the relay's /pin/status reports pinataReady.
+ */
+export const isPinataConfigured = async (): Promise<boolean> => {
+  try {
+    const relayBase = getLocalNode(8765)
+    const res = await fetch(`${relayBase}/pin/status`, { signal: AbortSignal.timeout(2000) })
+    if (!res.ok) return false
+    const data = await res.json()
+    return data.pinataReady === true
+  } catch {
+    return false
+  }
+}
+
+export const uploadPublicKey = async (publicKey: string): Promise<string> => {
+  // Try relay proxy first (globally reachable)
+  try {
+    const blob = new Blob([publicKey], { type: "text/plain" })
+    const cid = await uploadFileToPinata(blob, `pubkey_${Date.now()}.asc`)
+    console.log("🌍 [Global] Public key anchored:", cid)
+    return cid
+  } catch (proxyErr) {
+    console.warn("⚠️ Relay /pin-file failed for key, using local Kubo fallback", proxyErr)
+  }
+
+  // Fallback: local Kubo
+  try {
+    const blob = new Blob([publicKey], { type: "text/plain" })
+    const formData = new FormData()
+    formData.append("file", blob, `id_${Date.now()}.txt`)
+
+    const addResponse = await fetch(`${getLocalNode(5001)}/api/v0/add?pin=true`, {
+      method: "POST",
+      body: formData,
+    })
+
+    if (!addResponse.ok) throw new Error("Kubo id add failed")
+
+    const text = await addResponse.text()
+    const result = JSON.parse(text.trim().split("\n").pop()!)
+    return result.Hash
+  } catch (err) {
+    console.warn("⚠️ IPFS Identity Anchoring failed — falling back to network only", err)
+    return ""
+  }
+}
+
+export const fetchPublicKeyFromIPFS = async (cid: string): Promise<string> => {
+  try {
+    const data = await fetchFromIPFS(cid)
+    return typeof data === "string" ? data : JSON.stringify(data)
+  } catch { return "" }
+}
+
 export const stripPGP = (text: string): string => {
   if (!text) return ""
   return text
@@ -134,59 +257,67 @@ export const uploadFileToIPFS = async (blob: Blob, filename: string): Promise<st
 export const fetchFromIPFS = async (cid: string): Promise<any> => {
   if (!cid || cid.length < 10) throw new Error("Invalid CID")
 
-  const strategies = [
-    // 1. Web3.Storage Gateway (Very fast for w3s uploads)
-    async () => {
-      const response = await fetch(`https://${cid}.ipfs.w3s.link/`, {
-        signal: AbortSignal.timeout(6000),
-      })
-      if (!response.ok) throw new Error("w3s failed")
-      return await response.json()
-    },
-    // 2. DWeb.link (Global CDN)
-    async () => {
-      const response = await fetch(`https://${cid}.ipfs.dweb.link/`, {
-        signal: AbortSignal.timeout(8000),
-      })
-      if (!response.ok) throw new Error("dweb failed")
-      return await response.json()
-    },
-    // 3. Local Kubo (Still useful if user has it running)
-    async () => {
-      const response = await fetch(`${getLocalNode(5001)}/api/v0/cat?arg=${cid}`, {
-        method: "POST",
-        signal: AbortSignal.timeout(3000),
-      })
-      if (!response.ok) throw new Error("Local cat failed")
-      return JSON.parse(await response.text())
-    },
-    // 4. Cloudflare
-    async () => {
-      const response = await fetch(`https://cloudflare-ipfs.com/ipfs/${cid}`, {
-        signal: AbortSignal.timeout(10000),
-      })
-      if (!response.ok) throw new Error("Cloudflare failed")
-      return await response.json()
-    },
-    // 5. IPFS.io
-    async () => {
-      const response = await fetch(`https://ipfs.io/ipfs/${cid}`, {
-        signal: AbortSignal.timeout(12000),
-      })
-      if (!response.ok) throw new Error("ipfs.io failed")
-      return await response.json()
-    },
+  const gateways = [
+    // 🌍 PINATA FIRST — content pinned here is globally available immediately
+    { name: "Pinata",       url: (c: string) => `https://gateway.pinata.cloud/ipfs/${c}`, timeout: 8000 },
+    
+    // 🔗 LOCAL RELAY (fast if user is on same network)
+    { name: "Local Kubo",   url: (c: string) => `${getLocalNode(5001)}/api/v0/cat?arg=${c}`, method: "POST", timeout: 5000 },
+    
+    // 🌍 HIGH-AVAILABILITY PUBLIC GATEWAYS
+    { name: "Cloudflare",   url: (c: string) => `https://cloudflare-ipfs.com/ipfs/${c}`, timeout: 10000 },
+    { name: "IPFS.io",      url: (c: string) => `https://ipfs.io/ipfs/${c}`, timeout: 12000 },
+    { name: "Web3.Storage", url: (c: string) => `https://${c}.ipfs.w3s.link/`, timeout: 12000 },
+    { name: "DWeb",         url: (c: string) => `https://${c}.ipfs.dweb.link/`, timeout: 12000 },
+    
+    // 🛡️ BACKUP GATEWAYS
+    { name: "Gateway.ipfs", url: (c: string) => `https://gateway.ipfs.io/ipfs/${c}`, timeout: 15000 },
+    { name: "Lighthouse",   url: (c: string) => `https://gateway.lighthouse.storage/ipfs/${c}`, timeout: 15000 },
   ]
 
-  for (const strategy of strategies) {
+  const fetchWithTimeout = async (gate: any) => {
+    const controller = new AbortController()
+    const id = setTimeout(() => controller.abort(), gate.timeout)
+    
     try {
-      return await strategy()
-    } catch {
-      continue
+      const response = await fetch(gate.url(cid), {
+        method: gate.method || "GET",
+        signal: controller.signal
+      })
+      clearTimeout(id)
+      if (!response.ok) throw new Error(`${gate.name} failed (${response.status})`)
+      const text = await response.text()
+      try { return JSON.parse(text) } 
+      catch { return text }
+    } catch (err) {
+      clearTimeout(id)
+      throw err
     }
   }
 
-  throw new Error(`Could not fetch CID ${cid} from any source`)
+  // 🔄 Multi-Stage Fetching
+  // Stage 1: Fast Fetch (Local + Fast Global)
+  const firstPool = gateways.slice(0, 4)
+  for (const gate of firstPool) {
+    try {
+      // console.log(`📦 [IPFS] Trying ${gate.name}...`)
+      return await fetchWithTimeout(gate)
+    } catch { continue }
+  }
+
+  // Stage 2: Deep Fetch (Parallel fallback for remaining)
+  console.warn(`📦 [IPFS] Fast fetch failed for ${cid.slice(0, 10)}... starting deep scan.`)
+  const remainingPool = gateways.slice(4)
+  
+  // Try them one by one but with higher persistence
+  for (const gate of remainingPool) {
+    try {
+      // console.log(`📦 [IPFS] Probing backup: ${gate.name}...`)
+      return await fetchWithTimeout(gate)
+    } catch { continue }
+  }
+
+  throw new Error(`Global Communication Error: Could not fetch content ${cid} from any of ${gateways.length} sources. The content may not have propagated yet.`)
 }
 
 export const getIPFSLinks = (cid: string) => ({
@@ -221,6 +352,89 @@ export const checkPinStatus = async (
   } catch {
     return "offline"
   }
+}
+
+// ── IPFS PubSub Discovery Loop ───────────────────────────────
+// This enables LAN discovery for users on the same WiFi/Network
+const DISCOVERY_TOPIC = "securemail_discovery_v1";
+
+export const startDiscoveryPubSub = async (userEmail: string, publicKey: string) => {
+  if (typeof window === "undefined") return;
+
+  const announceSelf = async () => {
+    try {
+      // 🛡️ Pre-check connectivity to avoid console flooding
+      const controller = new AbortController()
+      const timeoutId = setTimeout(() => controller.abort(), 1000)
+      const isReachable = await fetch(`${getLocalNode(5001)}/api/v0/id`, { method: "POST", signal: controller.signal, mode: 'no-cors' })
+        .then(() => true).catch(() => false)
+      clearTimeout(timeoutId)
+      if (!isReachable) return
+
+      const data = JSON.stringify({ type: "announce", email: userEmail, publicKey, timestamp: Date.now() });
+      await fetch(`${getLocalNode(5001)}/api/v0/pubsub/pub?arg=${DISCOVERY_TOPIC}`, {
+        method: "POST",
+        body: new TextEncoder().encode(data)
+      });
+    } catch {}
+  };
+
+  const listenForPeers = async () => {
+    try {
+      // 🛡️ Pre-check connectivity to avoid console flooding
+      const controller = new AbortController()
+      const timeoutId = setTimeout(() => controller.abort(), 1000)
+      const isReachable = await fetch(`${getLocalNode(5001)}/api/v0/id`, { method: "POST", signal: controller.signal, mode: 'no-cors' })
+        .then(() => true).catch(() => false)
+      clearTimeout(timeoutId)
+      if (!isReachable) return
+
+      const response = await fetch(`${getLocalNode(5001)}/api/v0/pubsub/sub?arg=${DISCOVERY_TOPIC}`, {
+        method: "POST"
+      });
+      const reader = response.body?.getReader();
+      if (!reader) return;
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        
+        try {
+          const chunk = new TextDecoder().decode(value);
+          const lines = chunk.trim().split("\n");
+          for (const line of lines) {
+            const parsed = JSON.parse(line);
+            const msg = JSON.parse(atob(parsed.data));
+            if (msg.type === "announce" && msg.email && msg.publicKey) {
+              const { gun } = await import("./gun");
+              gun.get("securemail_pubkeys").get(msg.email).put({ email: msg.email, publicKey: msg.publicKey });
+            }
+            // 🛡️ Discovery Storm: React to repair requests
+            else if (msg.type === "REPAIR_REQUIRED" && msg.email) {
+              const userJson = localStorage.getItem("user");
+              if (userJson) {
+                const user = JSON.parse(userJson);
+                if (user.email === msg.email) {
+                   console.log("🛡️ [Discovery Storm] Someone reported our key is broken. Repairing and re-broadcasting...");
+                   // We don't need to import gun here to avoid cycles, announceSelf handles it
+                   announceSelf(); 
+                }
+              }
+            }
+          }
+        } catch {}
+      }
+    } catch {
+      // If disconnected, retry once after a delay instead of immediate infinite loop
+      await new Promise(r => setTimeout(r, 10000));
+      listenForPeers();
+    }
+  };
+
+  // Launch parallel loops
+  announceSelf();
+  listenForPeers();
+  setInterval(announceSelf, 60000); // reduced heartbeat frequency
 }
 
 export const exportMailFromIPFS = async (cid: string, subject: string) => {

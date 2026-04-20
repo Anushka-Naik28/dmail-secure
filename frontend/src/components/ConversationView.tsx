@@ -6,7 +6,7 @@ import {
   MoreVertical, Star, Trash2, Archive, 
   Paperclip, Shield, Share2, Send, X,
   Maximize2, Minimize2, Download, FileText, File,
-  ArrowLeft, Printer, ExternalLink
+  ArrowLeft, Printer, ExternalLink, Lock
 } from "lucide-react"
 import { decryptMessage } from "@/utils/gun"
 import { getCachedMail, updateCachedMail } from "@/utils/mailCache"
@@ -118,7 +118,8 @@ export default function ConversationView({
   }
 
   const handleDownload = (cid: string, filename: string) => {
-    const url = `${getLocalNode(8080)}/ipfs/${cid}`
+    // Use public gateway for reliable cross-device browsing/download
+    const url = `https://ipfs.io/ipfs/${cid}`
     window.open(url, "_blank")
   }
 
@@ -230,19 +231,28 @@ export default function ConversationView({
                         {needsDecrypt ? (
                           <div style={{ 
                             padding: "24px", borderRadius: "8px", 
-                            background: "rgba(212,160,23,0.04)", border: "1px solid rgba(212,160,23,0.15)",
-                            display: "flex", flexDirection: "column", alignItems: "center", gap: "12px"
+                            background: "var(--bg-vault)", border: "1px solid var(--border-gold)",
+                            display: "flex", flexDirection: "column", gap: "12px",
+                            boxShadow: "var(--shadow-deep)"
                           }}>
-                            <Shield size={28} color="var(--gold-mid)" />
-                            <div style={{ textAlign: "center" }}>
-                              <p style={{ fontSize: "13px", fontWeight: "700", color: "var(--text-bright)", margin: "0 0 4px" }}>Secure Encryption</p>
-                              <p style={{ fontSize: "12px", color: "var(--text-muted)", margin: 0 }}>This content is protected. Unlock to read.</p>
+                            <h2 style={{ fontFamily: "Cinzel, serif", fontSize: "16px", color: "var(--text-bright)", margin: 0 }}>ENCRYPTED CONTENT</h2>
+                            <p style={{ color: "var(--text-muted)", fontSize: "13px", lineHeight: 1.6, margin: 0 }}>
+                              This message is end-to-end encrypted. Enter your DMail password to unlock.
+                            </p>
+                            <div style={{ marginTop: "8px", display: "flex", gap: "12px", alignItems: "center" }}>
+                              <div style={{
+                                display: "inline-flex", alignItems: "center", gap: "6px",
+                                background: "rgba(212,160,23,0.1)", padding: "6px 12px", borderRadius: "8px",
+                                border: "1px solid var(--border-gold)", color: "var(--gold-mid)", fontSize: "11px", fontWeight: "700"
+                              }}>
+                                <Lock size={12} /> ECC Curve25519
+                              </div>
+                              <button 
+                                className="btn"
+                                onClick={(e) => { e.stopPropagation(); startDecrypt(msg.id); }}
+                                style={{ fontSize: "11px", padding: "6px 16px", borderRadius: "20px" }}
+                              >UNLOCK MESSAGE</button>
                             </div>
-                            <button 
-                              className="btn"
-                              onClick={(e) => { e.stopPropagation(); startDecrypt(msg.id); }}
-                              style={{ fontSize: "11px", padding: "6px 20px", borderRadius: "10px" }}
-                            >Quick Unlock</button>
                           </div>
                         ) : content}
                       </div>

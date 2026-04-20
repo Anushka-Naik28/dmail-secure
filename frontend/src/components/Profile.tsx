@@ -1,7 +1,8 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { gun } from "@/utils/gun"
+import { gun, db } from "@/utils/gun"
+import { copyToClipboard } from "@/utils/clipboard"
 
 export default function ProfilePage() {
   const [user, setUser] = useState<any>(null)
@@ -48,9 +49,47 @@ export default function ProfilePage() {
 
   const copyPublicKey = () => {
     if (!user?.publicKey) return
-    navigator.clipboard.writeText(user.publicKey)
+    copyToClipboard(user.publicKey)
     setCopiedPublic(true)
     setTimeout(() => setCopiedPublic(false), 2000)
+  }
+
+  const [syncing, setSyncing] = useState(false)
+  const [syncStatus, setSyncStatus] = useState<"idle" | "success" | "error">("idle")
+
+  const syncIdentity = async () => {
+    setSyncing(true)
+    setSyncStatus("idle")
+    
+    try {
+      const { isKeyValid, db } = await import("@/utils/gun")
+      const localUser = JSON.parse(localStorage.getItem("user") || "{}")
+      
+      const isValid = await isKeyValid(localUser.publicKey)
+      if (!isValid) {
+        console.warn("🚨 Local public key is corrupted (Length:", localUser.publicKey?.length, "). Attempting Auto-Repair...")
+        const repair = await db.repairIdentity()
+        if (repair.success) {
+           setSyncStatus("success")
+           alert(`✅ Identity Repaired & Synced!\nYour public key has been restored (New Length: ${repair.length} chars). Others can now find you.`)
+           setSyncing(false)
+           return
+        } else {
+           setSyncStatus("error")
+           alert(`❌ Identity Corruption: Repair failed (${repair.error}). Please log out and back in to fully reset your identity.`)
+           setSyncing(false)
+           return
+        }
+      }
+
+      await db.reannounceUser()
+      setSyncStatus("success")
+      setTimeout(() => setSyncStatus("idle"), 3000)
+    } catch (e) {
+      setSyncStatus("error")
+    }
+    
+    setSyncing(false)
   }
 
   const downloadPublicKey = () => {
@@ -94,9 +133,30 @@ export default function ProfilePage() {
           {user.name?.charAt(0).toUpperCase()}
         </div>
         <h2 style={{ color: "var(--text-bright)", marginBottom: "4px" }}>{user.name}</h2>
-        <p style={{ color: "var(--gold-mid)", fontSize: "14px", fontFamily: "Courier New, monospace" }}>
+        <p style={{ color: "var(--gold-mid)", fontSize: "14px", fontFamily: "Courier New, monospace", marginBottom: "16px" }}>
           {user.email}
         </p>
+        
+        <button 
+          onClick={syncIdentity} 
+          disabled={syncing}
+          className="btn-secondary" 
+          style={{ 
+            fontSize: "11px", padding: "6px 16px", borderRadius: "20px", 
+            background: 
+              syncStatus === "success" ? "rgba(76,175,110,0.2)" : 
+              syncStatus === "error" ? "rgba(217,48,37,0.2)" : 
+              syncing ? "rgba(212,160,23,0.1)" : "",
+            color: 
+              syncStatus === "success" ? "#4caf6e" : 
+              syncStatus === "error" ? "#e84234" : ""
+          }}
+        >
+          {syncing ? "📡 Syncing..." : 
+           syncStatus === "success" ? "✅ Identity Synced!" : 
+           syncStatus === "error" ? "❌ Sync Failed" : 
+           "🔄 Sync Identity with Network"}
+        </button>
       </div>
 
       {/* Stats */}

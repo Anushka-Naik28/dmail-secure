@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react"
 import { checkPinStatus, exportMailFromIPFS, getLocalNode } from "@/utils/ipfs"
 import { getMails, subscribe } from "@/utils/mailStore"
+import { copyToClipboard } from "@/utils/clipboard"
 import PageHeader from "@/components/PageHeader"
 
 type Tab = "overview" | "cids" | "backup"
@@ -129,8 +130,14 @@ export default function IPFSExplorerPage() {
     }
   }
 
+  const handleDownload = (cid: string, filename: string) => {
+    // Standardize to public gateway for reliable browser download
+    const url = `https://ipfs.io/ipfs/${cid}`
+    window.open(url, "_blank")
+  }
+
   const copyCid = (cid: string) => {
-    navigator.clipboard.writeText(cid)
+    copyToClipboard(cid)
     setCopiedCid(cid)
     setTimeout(() => setCopiedCid(null), 2000)
   }
@@ -749,13 +756,12 @@ export default function IPFSExplorerPage() {
               />
               <button
                 onClick={async () => {
-                  if (!restoreCid.trim()) return
                   try {
-                    const res  = await fetch(`${getLocalNode(8080)}/ipfs/${restoreCid.trim()}`)
-                    const data = await res.json()
+                    const { fetchFromIPFS } = await import("@/utils/ipfs")
+                    const data = await fetchFromIPFS(restoreCid.trim())
                     alert(`✅ Backup found: ${data.mailCount} mails from ${data.email} (${data.createdAt?.split("T")[0]})`)
-                  } catch {
-                    alert("❌ Could not fetch backup — check the CID and your IPFS daemon.")
+                  } catch (e) {
+                    alert("❌ Could not fetch backup from global or local IPFS — check the CID and your connection.")
                   }
                 }}
                 disabled={!restoreCid.trim()}

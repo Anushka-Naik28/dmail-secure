@@ -16,10 +16,12 @@ const dedup = () => {
   )
 }
 
-export const initMailStore = (userEmail: string) => {
-  if (isListening && currentEmail === userEmail) return
+export const initMailStore = (userEmail: string, force = false) => {
+  if (isListening && currentEmail === userEmail && !force) return
   currentEmail = userEmail
   isListening = true
+
+  console.log(`📥 [MailStore] Initializing for ${userEmail} (force: ${force})`)
 
   // 1. Load IndexedDB cache instantly
   getCachedMails(userEmail).then((cached) => {
@@ -37,8 +39,7 @@ export const initMailStore = (userEmail: string) => {
   db.listenUserMails(userEmail, async (mail: any) => {
     if (!mail || !mail.id) return
 
-    console.log(`📥 [Raw Incoming] ID: ${mail.id} | From: ${mail.senderEmail} | Status: ${mail.status}`)
-
+    // mail received from GunDB sync
     const idx = allMails.findIndex((m) => m.id === mail.id)
 
     const isNewIncoming =
@@ -46,21 +47,30 @@ export const initMailStore = (userEmail: string) => {
       ["inbox", "request", "spam"].includes(mail.status) &&
       !processedIds.has(mail.id)
 
-    if (isNewIncoming) {
-      processedIds.add(mail.id)
-      
-      // 🚀 Proactive Content Sync: Fetch full body from IPFS if missing
-      // This ensures we have the body for spam filtering and immediate display in all folders
-      if (mail.cid && !mail.message) {
+    // 🚀 Proactive Content Sync: Fetch full body from IPFS if missing for ANY mail (sent or incoming)
+    // We implement a "Soft Retry" for global communication stability
+    if (mail.cid && !mail.message && !processedIds.has(`fetch_${mail.id}`)) {
+      processedIds.add(`fetch_${mail.id}`)
+      const fetchContent = async (attempt = 1) => {
         try {
           const { fetchFromIPFS } = await import("@/utils/ipfs")
           const ipfsData = await fetchFromIPFS(mail.cid)
-          mail = { ...mail, ...ipfsData }
+          updateMailInStore(mail.id, { ...ipfsData, fromCache: false })
           console.log("📥 Background body sync complete for:", mail.id)
         } catch (e) {
-          console.warn("⚠️ Background content fetch failed for", mail.id, e)
+          if (attempt < 3) {
+            const delay = attempt * 10000; // 10s, 20s
+            setTimeout(() => fetchContent(attempt + 1), delay);
+          } else {
+            console.error("❌ Global fetch failed after 3 attempts for:", mail.id, e)
+          }
         }
       }
+      fetchContent();
+    }
+
+    if (isNewIncoming) {
+      processedIds.add(mail.id)
 
       try {
         const decision = await filterIncomingMail(mail, userEmail)

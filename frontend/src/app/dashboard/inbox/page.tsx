@@ -148,37 +148,29 @@ export default function InboxPage() {
       }
 
       if (hasValidCid(mail)) {
-        const strategies = [
-          { url: `${getLocalNode(5001)}/api/v0/cat?arg=${mail.cid}`, method: "POST" },
-          { url: `${getLocalNode(8080)}/ipfs/${mail.cid}`, method: "GET" },
-          { url: `https://cloudflare-ipfs.com/ipfs/${mail.cid}`, method: "GET" },
-        ]
-
-        for (const s of strategies) {
-          try {
-            const res = await fetch(s.url, { method: s.method, signal: AbortSignal.timeout(5000) })
-            if (!res.ok) continue
-            const text = await res.text()
-            const parsed = JSON.parse(text)
-            if (parsed.message) {
-              let finalMessage = parsed.message
-              let encrypted = finalMessage.includes("-----BEGIN PGP MESSAGE-----")
-              // Manual Mode: We no longer auto-decrypt here.
-              // This ensures the "Unlock" Shield is always shown for security.
-              
-              setSelectedMail({
-                ...mail,
-                message: finalMessage,
-                attachments: parsed.attachments || mail.attachments || [],
-                hasAttachments: parsed.hasAttachments || mail.hasAttachments || (parsed.attachments?.length > 0),
-                isDecrypted: false, // Force manual unlock
-                isEncrypted: encrypted
-              })
-              setLoadingMail(false)
-              return
-            }
-          } catch (e) { continue }
+      if (hasValidCid(mail)) {
+        try {
+          const { fetchFromIPFS } = await import("@/utils/ipfs")
+          const parsed = await fetchFromIPFS(mail.cid)
+          if (parsed && parsed.message) {
+            let finalMessage = parsed.message
+            let encrypted = finalMessage.includes("-----BEGIN PGP MESSAGE-----")
+            
+            setSelectedMail({
+              ...mail,
+              message: finalMessage,
+              attachments: parsed.attachments || mail.attachments || [],
+              hasAttachments: parsed.hasAttachments || mail.hasAttachments || (parsed.attachments?.length > 0),
+              isDecrypted: false, // Force manual unlock
+              isEncrypted: encrypted
+            })
+            setLoadingMail(false)
+            return
+          }
+        } catch (e) {
+          console.warn("Manual fetch fallback failed:", e)
         }
+      }
       }
 
       const backupMessage = mail.message || cached?.message
@@ -257,27 +249,15 @@ export default function InboxPage() {
     setIpfsViewLoading(true)
     setIpfsViewContent(null)
 
-    const strategies = [
-      { url: `${getLocalNode(5001)}/api/v0/cat?arg=${selectedMail.cid}`, method: "POST" },
-      { url: `${getLocalNode(8080)}/ipfs/${selectedMail.cid}`, method: "GET" },
-      { url: `https://ipfs.io/ipfs/${selectedMail.cid}`, method: "GET" },
-    ]
-
-    for (const s of strategies) {
-      try {
-        const res = await fetch(s.url, { method: s.method, signal: AbortSignal.timeout(6000) })
-        if (!res.ok) continue
-        const text = await res.text()
-        try {
-          const parsed = JSON.parse(text)
-          setIpfsViewContent({ ...parsed, cid: selectedMail.cid })
-        } catch { setIpfsViewContent({ raw: text.slice(0, 300) + "..." }) }
-        setIpfsViewLoading(false)
-        return
-      } catch { continue }
+    try {
+      const { fetchFromIPFS } = await import("@/utils/ipfs")
+      const data = await fetchFromIPFS(selectedMail.cid)
+      setIpfsViewContent({ ...data, cid: selectedMail.cid })
+      setIpfsViewLoading(false)
+    } catch (err) {
+      setIpfsViewContent({ error: "Failed to fetch from IPFS globally." })
+      setIpfsViewLoading(false)
     }
-    setIpfsViewContent({ error: "Failed to fetch from IPFS." })
-    setIpfsViewLoading(false)
   }
 
   const handleReply = () => {
@@ -310,14 +290,17 @@ export default function InboxPage() {
     }
     setSendingReply(true)
     db.getUser(recipient, async (recipientData: any) => {
+      // Fallback: try Nostr mesh if GunDB can't find the recipient
       if (!recipientData?.publicKey) {
-        setReplyStatus("error")
-        setReplyStatusMsg("Recipient not found.")
-        setSendingReply(false)
-        return
+        setReplyStatusMsg("🌐 Searching global mesh...")
+        try {
+          const { nostr } = await import("@/utils/nostr")
+          const meshData = await nostr.find(recipient, true)
+          if (meshData?.publicKey) recipientData = meshData
+        } catch {}
       }
       try {
-        const encrypted = await encryptMessage(replyBody, recipientData.publicKey)
+        const encrypted = await encryptMessage(replyBody, recipientData?.publicKey || null, recipient)
         const mail = {
           senderEmail: user.email,
           receiverEmail: recipient,
@@ -409,7 +392,12 @@ export default function InboxPage() {
 
   const handleDownloadAttachment = async (cid: string, name: string) => {
     try {
-      const res = await fetch(`${getLocalNode(8080)}/ipfs/${cid}`)
+      const { fetchFromIPFS } = await import("@/utils/ipfs")
+      // fetchFromIPFS returns parsed data, but for attachment download we might want the raw blob
+      // However, fetchFromIPFS (as modified) returns text/json.
+      // Let's use the exportMailFromIPFS logic or similar.
+      // Actually, for consistency let's use a direct fetch to public gateway if local fails
+      const res = await fetch(`https://ipfs.io/ipfs/${cid}`)
       if (!res.ok) throw new Error()
       const blob = await res.blob()
       const url = URL.createObjectURL(blob)
@@ -637,77 +625,118 @@ export default function InboxPage() {
     )
   }
 
+  const formatMailDate = (timeStr: string) => {
+    if (!timeStr) return ""
+    const d = new Date(timeStr)
+    if (isNaN(d.getTime())) return timeStr.split(",")[0] || ""
+    const now = new Date()
+    const isToday = d.toDateString() === now.toDateString()
+    if (isToday) return d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true })
+    const isThisYear = d.getFullYear() === now.getFullYear()
+    if (isThisYear) return d.toLocaleDateString("en-US", { month: "short", day: "numeric" })
+    return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "2-digit" })
+  }
+
   const renderMailRow = (mail: any) => {
     const isActive = selectedMail?.id === mail.id
     const isUnread = !mail.isRead && mail.receiverEmail === userEmail
-    
-    // Premium Name Formatting
+
     const senderRaw = mail.senderName || mail.senderEmail?.split("@")[0] || "Unknown"
     const senderName = senderRaw.charAt(0).toUpperCase() + senderRaw.slice(1)
-    
-    // Avatar Color Logic
+
     const colors = ["#d4a017", "#c9871a", "#9a6b0e", "#b8750a", "#8a5a08"]
-    const colorIdx = (senderName.charCodeAt(0) || 0) % colors.length
-    const avatarColor = colors[colorIdx]
+    const avatarColor = colors[(senderName.charCodeAt(0) || 0) % colors.length]
+
+    const snippet = mail.isDecrypted
+      ? mail.message?.replace(/-----BEGIN PGP MESSAGE-----[\s\S]*-----END PGP MESSAGE-----/g, "").slice(0, 100).trim()
+      : (mail.message?.includes("-----BEGIN PGP MESSAGE-----") || mail.isEncrypted)
+        ? "🔒 Encrypted — click to unlock"
+        : mail.message?.slice(0, 100)
 
     return (
       <div
         key={mail.id}
         onClick={() => { openMail(mail); if (isUnread) updateMailInStore(mail.id, { isRead: true }) }}
-        className={`mail-row ${isActive ? 'selected' : ''} ${isUnread ? 'unread' : ''}`}
+        className={`mail-row ${isActive ? "selected" : ""} ${isUnread ? "unread" : ""}`}
+        style={{
+          display: "flex",
+          alignItems: "center",
+          padding: "0 8px 0 4px",
+          minHeight: "52px",
+          cursor: "pointer",
+          borderBottom: "1px solid rgba(212,160,23,0.07)",
+          background: isActive
+            ? "rgba(212,160,23,0.09)"
+            : isUnread
+              ? "rgba(212,160,23,0.04)"
+              : "transparent",
+          transition: "background 0.15s",
+          gap: 0,
+          position: "relative",
+        }}
       >
-        <div className="sender-avatar" style={{ background: avatarColor }}>
+        {/* Avatar */}
+        <div style={{
+          flexShrink: 0, width: "36px", height: "36px", borderRadius: "50%",
+          background: avatarColor, display: "flex", alignItems: "center",
+          justifyContent: "center", fontWeight: "700", color: "#000",
+          fontSize: "14px", marginLeft: "4px", marginRight: "10px",
+        }}>
           {senderName.charAt(0)}
         </div>
 
-        <div className="mail-icons" onClick={(e) => e.stopPropagation()} style={{ flexShrink: 0, display: "flex", alignItems: "center", gap: "4px" }}>
-          <button onClick={(e) => { e.stopPropagation(); updateMailInStore(mail.id, { isStarred: !mail.isStarred }) }} 
-            className="chromeless-btn" style={{ padding: "4px" }}>
-            <Star size={16} fill={mail.isStarred ? "var(--gold-mid)" : "none"} color="var(--gold-mid)" />
+        {/* Star */}
+        <div onClick={(e) => e.stopPropagation()} style={{ flexShrink: 0, width: "56px", display: "flex", alignItems: "center", justifyContent: "center", marginRight: "8px" }}>
+          <button
+            onClick={(e) => { e.stopPropagation(); updateMailInStore(mail.id, { isStarred: !mail.isStarred }) }}
+            className="chromeless-btn"
+            style={{ padding: "2px", opacity: mail.isStarred ? 1 : 0.35 }}
+          >
+            <Star size={15} fill={mail.isStarred ? "var(--gold-mid)" : "none"} color="var(--gold-mid)" />
           </button>
         </div>
-        
-        <div className="mail-sender">{senderName}</div>
-        
-        <div className="mail-content">
-          <span className="mail-subject">{mail.subject || "(No Subject)"}</span>
-          
-          <span className="mail-snippet">
-            {mail.isDecrypted ? (
-              <span style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-                <span style={{ 
-                  color: "var(--gold-mid)", fontWeight: "800", fontSize: "9px", 
-                  textTransform: "uppercase", padding: "1px 6px", borderRadius: "4px",
-                  background: "rgba(212,160,23,0.1)", border: "1px solid rgba(212,160,23,0.2)"
-                }}>
-                  🔓 Decrypted
-                </span>
-                <span style={{ color: "var(--text-bright)", opacity: 0.9 }}>
-                  {mail.message?.replace(/-----BEGIN PGP MESSAGE-----[\s\S]*-----END PGP MESSAGE-----/g, "").slice(0, 150).trim()}
-                </span>
-              </span>
-            ) : mail.message?.includes("-----BEGIN PGP MESSAGE-----") || mail.isEncrypted ? (
-              <span style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-                <span style={{ 
-                  color: "var(--text-dim)", fontWeight: "800", fontSize: "9px", 
-                  textTransform: "uppercase", padding: "1px 6px", borderRadius: "4px",
-                  background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)"
-                }}>
-                  🔒 Securely Encrypted
-                </span>
-                <span style={{ color: "var(--text-dim)", fontSize: "11px", fontStyle: "italic" }}>
-                  Unlock to view message...
-                </span>
-              </span>
-            ) : (
-              <span style={{ color: "var(--text-dim)" }}>
-                {mail.message?.slice(0, 150)}
-              </span>
-            )}
+
+        {/* Sender — fixed 160px */}
+        <div style={{
+          flexShrink: 0, width: "160px", overflow: "hidden",
+          textOverflow: "ellipsis", whiteSpace: "nowrap",
+          fontSize: "13px", marginRight: "12px",
+          fontWeight: isUnread ? "700" : "500",
+          color: isUnread ? "var(--text-bright)" : "var(--text-muted)",
+        }}>
+          {senderName}
+        </div>
+
+        {/* Subject + Snippet — single inline line, flex */}
+        <div style={{
+          flex: 1, overflow: "hidden", whiteSpace: "nowrap",
+          textOverflow: "ellipsis", display: "flex", alignItems: "center", gap: "6px",
+        }}>
+          <span style={{
+            fontSize: "13px", flexShrink: 0,
+            fontWeight: isUnread ? "700" : "500",
+            color: isUnread ? "var(--text-bright)" : "var(--text-muted)",
+          }}>
+            {mail.subject || "(No Subject)"}
+          </span>
+          <span style={{ color: "var(--text-muted)", opacity: 0.5, flexShrink: 0, fontSize: "12px" }}>—</span>
+          <span style={{
+            fontSize: "12px", color: "var(--text-dim)",
+            overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+          }}>
+            {snippet}
           </span>
         </div>
-        
-        <div className="mail-date">{mail.time?.split(",")[0]}</div>
+
+        {/* Date — fixed right-aligned */}
+        <div style={{
+          flexShrink: 0, fontSize: "12px", marginLeft: "12px", width: "62px",
+          textAlign: "right",
+          fontWeight: isUnread ? "600" : "400",
+          color: isUnread ? "var(--text-bright)" : "var(--text-dim)",
+        }}>
+          {formatMailDate(mail.time)}
+        </div>
       </div>
     )
   }
@@ -839,8 +868,8 @@ export default function InboxPage() {
                       </div>
                    </div>
                    <div style={{ marginTop: "24px", textAlign: "center" }}>
-                      <div style={{ fontSize: "10px", fontWeight: "800", color: "var(--gold-mid)", opacity: 0.6, letterSpacing: "2px" }}>PGP-2048</div>
-                      <div style={{ fontSize: "8px", fontWeight: "700", color: "var(--gold-mid)", opacity: 0.4, marginTop: "4px" }}>RSA/AES-256</div>
+                       <div style={{ fontSize: "10px", fontWeight: "800", color: "var(--gold-mid)", opacity: 0.6, letterSpacing: "2px" }}>ECC</div>
+                       <div style={{ fontSize: "8px", fontWeight: "700", color: "var(--gold-mid)", opacity: 0.4, marginTop: "4px" }}>Curve25519</div>
                    </div>
                 </div>
 
@@ -972,7 +1001,7 @@ export default function InboxPage() {
              </div>
              <div>
                <div style={{ fontSize: "10px", color: "var(--text-muted)", textTransform: "uppercase" }}>Encryption Protocol</div>
-               <div style={{ fontSize: "11px", color: "var(--text-bright)" }}>PGP / RSA-4096 (End-to-End)</div>
+                <div style={{ fontSize: "11px", color: "var(--text-bright)" }}>OpenPGP / ECC Curve25519 (E2E)</div>
              </div>
              <div>
                <div style={{ fontSize: "10px", color: "var(--text-muted)", textTransform: "uppercase" }}>Verification</div>
@@ -988,7 +1017,7 @@ export default function InboxPage() {
 
   return (
     <div style={{ display: "flex", height: "100%", overflow: "hidden" }}>
-      <div style={{ width: selectedMail ? "350px" : "100%", borderRight: selectedMail ? "1px solid var(--border-gold)" : "none", display: "flex", flexDirection: "column" }}>
+      <div style={{ width: selectedMail ? "380px" : "100%", borderRight: selectedMail ? "1px solid var(--border-gold)" : "none", display: "flex", flexDirection: "column", flexShrink: 0 }}>
         <PageHeader 
           title="Inbox" 
           count={mails.length} 

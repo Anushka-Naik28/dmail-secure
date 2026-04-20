@@ -35,6 +35,18 @@ export default function SpamPage() {
     return () => unsub()
   }, [])
 
+  const formatMailDate = (timeStr: string) => {
+    if (!timeStr) return ""
+    const d = new Date(timeStr)
+    if (isNaN(d.getTime())) return timeStr.split(",")[0] || ""
+    const now = new Date()
+    const isToday = d.toDateString() === now.toDateString()
+    if (isToday) return d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true })
+    const isThisYear = d.getFullYear() === now.getFullYear()
+    if (isThisYear) return d.toLocaleDateString("en-US", { month: "short", day: "numeric" })
+    return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "2-digit" })
+  }
+
   const getUser = () => JSON.parse(localStorage.getItem("user") || "{}")
 
   const restoreToInbox = (mailId: string, senderEmail: string) => {
@@ -280,87 +292,85 @@ export default function SpamPage() {
             filteredThreads.map((thread) => {
               const mail = thread.lastMessage
               const isSelected = selectedIds.includes(thread.id)
+              const senderRaw = mail.senderName || mail.senderEmail?.split("@")[0] || "Unknown"
+              const senderName = senderRaw.charAt(0).toUpperCase() + senderRaw.slice(1)
+              const colors = ["#d4a017", "#c9871a", "#9a6b0e", "#b8750a", "#8a5a08"]
+              const avatarColor = colors[(senderName.charCodeAt(0) || 0) % colors.length]
+
               return (
                 <div
                   key={thread.id}
-                  className={`mail-row ${isSelected ? 'selected' : ''}`}
+                  className={`mail-row ${isSelected ? "selected" : ""} ${!thread.isRead ? "unread" : ""}`}
                   onClick={() => openThread(thread)}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    padding: "0 8px 0 4px",
+                    minHeight: "52px",
+                    cursor: "pointer",
+                    borderBottom: "1px solid rgba(212,160,23,0.07)",
+                    background: isSelected ? "rgba(212,160,23,0.09)" : "transparent",
+                    transition: "background 0.15s",
+                    gap: 0,
+                    position: "relative",
+                  }}
                 >
-                  <div style={{ flexShrink: 0, display: "flex", alignItems: "center", gap: "4px", width: "70px", paddingLeft: "12px", position: "relative", zIndex: 1 }} onClick={(e) => e.stopPropagation()}>
-                    <div 
-                      className={`mail-row-checkbox ${isSelected ? 'checked' : ''}`}
+                  {/* Avatar */}
+                  <div style={{
+                    flexShrink: 0, width: "36px", height: "36px", borderRadius: "50%",
+                    background: avatarColor, display: "flex", alignItems: "center",
+                    justifyContent: "center", fontWeight: "700", color: "#000",
+                    fontSize: "14px", marginLeft: "4px", marginRight: "10px",
+                  }}>
+                    {senderName.charAt(0)}
+                  </div>
+
+                  {/* Star & Checkbox Area — fixed 56px */}
+                  <div onClick={(e) => e.stopPropagation()} style={{ flexShrink: 0, display: "flex", alignItems: "center", gap: "4px", width: "56px", marginRight: "8px" }}>
+                    <div
+                      className={`mail-row-checkbox ${isSelected ? "checked" : ""}`}
                       onClick={(e) => toggleSelect(e, thread.id)}
-                      style={{ width: "16px", height: "16px", border: "1px solid var(--border-gold)", borderRadius: "3px", marginRight: "8px" }}
+                      style={{ width: "16px", height: "16px", border: "1px solid var(--border-gold)", borderRadius: "3px" }}
                     >
                       {isSelected && <CheckSquare size={12} color="#000" />}
                     </div>
-                    <Star 
-                      size={16} 
-                      className={`star-icon ${mail.isStarred ? 'starred' : ''}`}
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        updateMailInStore(mail.id, { isStarred: !mail.isStarred })
-                      }}
-                      fill={mail.isStarred ? "var(--gold-mid)" : "none"}
-                      color="var(--gold-mid)"
-                    />
-                  </div>
-
-                  <div className="mail-sender">
-                    {mail.senderName || mail.senderEmail?.split("@")[0]}
-                  </div>
-
-                  <div className="mail-content">
-                    <span className="mail-subject">
-                      <span style={{ 
-                        color: activeTab === "spam" ? "#e84234" : "var(--gold-mid)", 
-                        fontSize: "9px", fontWeight: "800", marginRight: "8px",
-                        padding: "1px 6px", borderRadius: "4px",
-                        background: activeTab === "spam" ? "rgba(232,66,52,0.1)" : "rgba(212,160,23,0.1)",
-                        border: `1px solid ${activeTab === "spam" ? "rgba(232,66,52,0.2)" : "rgba(212,160,23,0.2)"}`
-                      }}>
-                        {activeTab.toUpperCase()}
-                      </span>
-                      {mail.subject}
-                    </span>
-                    <span className="mail-snippet">
-                      {mail.isDecrypted ? (
-                        <span style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-                          <span style={{ 
-                            color: "var(--gold-mid)", fontWeight: "800", fontSize: "9px", 
-                            textTransform: "uppercase", padding: "1px 4px", borderRadius: "3px",
-                            background: "rgba(212,160,23,0.1)", border: "1px solid rgba(212,160,23,0.15)"
-                          }}>
-                            🔓 Decrypted
-                          </span>
-                          <span>{mail.message?.replace(/-----BEGIN PGP MESSAGE-----[\s\S]*-----END PGP MESSAGE-----/g, "").slice(0, 80).trim()}</span>
-                        </span>
-                      ) : mail.message?.includes("-----BEGIN PGP MESSAGE-----") || mail.isEncrypted ? (
-                        <span style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-                          <span style={{ 
-                            color: "var(--text-dim)", fontWeight: "800", fontSize: "9px", 
-                            textTransform: "uppercase", padding: "1px 4px", borderRadius: "3px",
-                            background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)"
-                          }}>
-                            🔒 Encrypted
-                          </span>
-                          <span style={{ color: "var(--text-dim)", fontSize: "11px", fontStyle: "italic" }}>Secure message...</span>
-                        </span>
-                      ) : (
-                        mail.message?.slice(0, 80)
-                      )}
-                    </span>
-                  </div>
-
-                  {/* Hover Actions */}
-                  <div className="row-hover-actions">
-                    <button className="hover-icon-btn delete" title="Delete Forever" onClick={(e) => { e.stopPropagation(); setShowDeleteModal(thread.id) }}>
-                      <Trash2 size={16} />
+                    <button
+                      onClick={(e) => { e.stopPropagation(); updateMailInStore(mail.id, { isStarred: !mail.isStarred }) }}
+                      className="chromeless-btn"
+                      style={{ padding: "2px", opacity: mail.isStarred ? 1 : 0.35 }}
+                    >
+                      <Star size={15} fill={mail.isStarred ? "var(--gold-mid)" : "none"} color="var(--gold-mid)" />
                     </button>
                   </div>
 
-                  <div className="mail-date" style={{ width: "100px", textAlign: "right", paddingRight: "16px" }}>
-                    {mail.time?.split(",")[0]}
+                  {/* Sender — fixed 160px */}
+                  <div className="mail-sender" style={{ width: "160px", flexShrink: 0, marginRight: "12px", border: "none", fontSize: "13px", fontWeight: !thread.isRead ? "700" : "500", color: !thread.isRead ? "var(--text-bright)" : "var(--text-muted)" }}>
+                    {senderName}
+                  </div>
+
+                  {/* Subject + Snippet */}
+                  <div className="mail-content" style={{ flex: 1, border: "none", display: "flex", alignItems: "center", gap: "6px", overflow: "hidden" }}>
+                    <span style={{ 
+                      color: activeTab === "spam" ? "#e84234" : "var(--gold-mid)", 
+                      fontSize: "9px", fontWeight: "800", flexShrink: 0,
+                      padding: "1px 6px", borderRadius: "4px",
+                      background: activeTab === "spam" ? "rgba(232,66,52,0.1)" : "rgba(212,160,23,0.1)",
+                      border: `1px solid ${activeTab === "spam" ? "rgba(232,66,52,0.2)" : "rgba(212,160,23,0.2)"}`
+                    }}>
+                      {activeTab.toUpperCase()}
+                    </span>
+                    <span className="mail-subject" style={{ fontSize: "13px", color: "var(--text-bright)", fontWeight: !thread.isRead ? "700" : "500", flexShrink: 0, maxWidth: "200px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {mail.subject || "(No subject)"}
+                    </span>
+                    <span style={{ color: "var(--text-muted)", opacity: 0.5, margin: "0 2px", fontSize: "12px" }}>—</span>
+                    <span className="mail-snippet" style={{ fontSize: "12px", color: "var(--text-dim)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {mail.isDecrypted ? mail.message?.replace(/-----BEGIN PGP MESSAGE-----[\s\S]*-----END PGP MESSAGE-----/g, "").trim() : "🔒 Encrypted Content"}
+                    </span>
+                  </div>
+
+                  {/* Date */}
+                  <div style={{ flexShrink: 0, fontSize: "12px", marginLeft: "12px", width: "62px", textAlign: "right", color: "var(--text-dim)" }}>
+                    {formatMailDate(mail.time)}
                   </div>
                 </div>
               )

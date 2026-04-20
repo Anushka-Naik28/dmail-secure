@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
 import PageHeader from "@/components/PageHeader"
+import { Shield, Lock, ChevronLeft, Trash2, Edit3, CheckSquare, Square, MoreVertical, RefreshCw } from "lucide-react"
 
 interface Draft {
   id: string
@@ -18,6 +19,8 @@ export default function DraftsPage() {
   const [searchQuery, setSearchQuery] = useState("")
   const [selectedDraft, setSelectedDraft] = useState<Draft | null>(null)
   const [showDeleteModal, setShowDeleteModal] = useState<string | null>(null)
+  const [selectedIds, setSelectedIds] = useState<string[]>([])
+  const [isRefreshing, setIsRefreshing] = useState(false)
 
   const loadDrafts = () => {
     if (typeof window === "undefined") return
@@ -25,6 +28,18 @@ export default function DraftsPage() {
     if (!user.email) return
     const stored = localStorage.getItem(`drafts_${user.email}`)
     setDrafts(stored ? JSON.parse(stored) : [])
+  }
+
+  const formatMailDate = (timeStr: string) => {
+    if (!timeStr) return ""
+    const d = new Date(timeStr)
+    if (isNaN(d.getTime())) return timeStr.split(",")[0] || ""
+    const now = new Date()
+    const isToday = d.toDateString() === now.toDateString()
+    if (isToday) return d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true })
+    const isThisYear = d.getFullYear() === now.getFullYear()
+    if (isThisYear) return d.toLocaleDateString("en-US", { month: "short", day: "numeric" })
+    return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "2-digit" })
   }
 
   useEffect(() => {
@@ -106,161 +121,152 @@ export default function DraftsPage() {
         </div>
       </div>
 
-      {/* Split view */}
-      <div style={{ display: "flex", height: "calc(100% - 160px)", gap: "0", overflow: "hidden" }}>
-
-        {/* Left — draft list */}
-        <div style={{
-          width: selectedDraft ? "320px" : "100%",
-          flexShrink: 0,
-          borderRight: selectedDraft ? "1px solid var(--border-gold)" : "none",
-          overflowY: "auto",
-          transition: "width 0.2s ease",
-        }}>
-          {filteredDrafts.length === 0 ? (
-            <div style={{ textAlign: "center", padding: "48px 16px" }}>
-              <div style={{ fontSize: "48px", marginBottom: "12px", opacity: 0.3 }}>📝</div>
-              <p className="empty-state">
-                {searchQuery ? "No drafts found." : "No drafts yet. Start composing to save a draft."}
-              </p>
+      <div style={{ flex: 1, overflowY: "auto", position: "relative" }}>
+        {!selectedDraft ? (
+          <div className="mail-list" style={{ display: "flex", flexDirection: "column" }}>
+            <div className="folder-toolbar" style={{ borderTop: "none" }}>
+              <button className="toolbar-btn" onClick={() => selectedIds.length === filteredDrafts.length ? setSelectedIds([]) : setSelectedIds(filteredDrafts.map(d => d.id))}>
+                {selectedIds.length === filteredDrafts.length && filteredDrafts.length > 0 ? <CheckSquare size={18} color="var(--gold-mid)" /> : <Square size={18} />}
+              </button>
+              <button className="toolbar-btn" onClick={() => { setIsRefreshing(true); loadDrafts(); setTimeout(() => setIsRefreshing(false), 1000) }}>
+                <RefreshCw size={18} style={{ animation: isRefreshing ? "spin 1s linear infinite" : "none" }} />
+              </button>
+              <button className="toolbar-btn"><MoreVertical size={18} /></button>
             </div>
-          ) : (
-            filteredDrafts.map((draft) => {
-              const isActive = selectedDraft?.id === draft.id
-              return (
-                <div
-                  key={draft.id}
-                  onClick={() => setSelectedDraft(isActive ? null : draft)}
-                  className={`mail-row ${isActive ? 'selected' : ''}`}
-                >
-                  <div className="mail-icons">
-                    <span style={{ fontSize: "16px" }}>📝</span>
-                  </div>
 
-                  <div className="mail-sender">
-                    {draft.to ? `To: ${draft.to.split('@')[0]}` : "No recipient"}
-                  </div>
+            {filteredDrafts.length === 0 ? (
+              <div style={{ padding: "100px 40px", textAlign: "center", color: "var(--text-muted)" }}>
+                <div style={{ fontSize: "48px", marginBottom: "20px", opacity: 0.15 }}>📝</div>
+                <div style={{ fontSize: "18px", fontWeight: "600" }}>{searchQuery ? "No results found." : "No drafts found."}</div>
+                <div style={{ fontSize: "13px", opacity: 0.6, marginTop: "8px" }}>Start composing to save a draft locally.</div>
+              </div>
+            ) : (
+              filteredDrafts.map((draft) => {
+                const isActive = selectedDraft?.id === draft.id
+                const isSelected = selectedIds.includes(draft.id)
+                return (
+                  <div
+                    key={draft.id}
+                    className={`mail-row ${isSelected ? "selected" : ""}`}
+                    onClick={() => setSelectedDraft(draft)}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      padding: "0 8px 0 4px",
+                      minHeight: "52px",
+                      cursor: "pointer",
+                      borderBottom: "1px solid rgba(212,160,23,0.07)",
+                      background: isSelected ? "rgba(212,160,23,0.09)" : "transparent",
+                      transition: "background 0.15s",
+                      gap: 0,
+                      position: "relative",
+                    }}
+                  >
+                    {/* Draft Marker */}
+                    <div style={{
+                      flexShrink: 0, width: "36px", height: "36px", borderRadius: "50%",
+                      background: "rgba(232,66,52,0.1)", border: "1.5px solid rgba(232,66,52,0.3)",
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                      fontWeight: "700", color: "#e84234", fontSize: "14px",
+                      marginLeft: "4px", marginRight: "10px",
+                    }}>
+                      📝
+                    </div>
 
-                  <div className="mail-content">
-                    <span className="mail-subject">
-                      {draft.subject || "(No subject)"}
-                    </span>
-                    <span className="mail-snippet">
-                      {" — "}
-                      {draft.message?.slice(0, 60) || "(No message)"}
-                    </span>
-                  </div>
+                    {/* Checkbox Area — fixed 56px */}
+                    <div onClick={(e) => e.stopPropagation()} style={{ flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", width: "56px", marginRight: "8px" }}>
+                      <div
+                        className={`mail-row-checkbox ${isSelected ? "checked" : ""}`}
+                        onClick={(e) => { e.stopPropagation(); setSelectedIds(prev => prev.includes(draft.id) ? prev.filter(i => i !== draft.id) : [...prev, draft.id]) }}
+                        style={{ width: "16px", height: "16px", border: "1px solid var(--border-gold)", borderRadius: "3px" }}
+                      >
+                        {isSelected && <CheckSquare size={12} color="#000" />}
+                      </div>
+                    </div>
 
-                  <div className="mail-row-actions">
-                    <button
-                      title="Delete Draft"
-                      onClick={(e) => { e.stopPropagation(); setShowDeleteModal(draft.id) }}
-                    >🗑️</button>
-                  </div>
+                    {/* Sender Label — fixed 160px */}
+                    <div className="mail-sender" style={{ width: "160px", flexShrink: 0, marginRight: "12px", border: "none", fontSize: "13px", fontWeight: "700", color: "#e84234" }}>
+                      Draft
+                    </div>
 
-                  <div className="mail-date">
-                    {draft.savedAt?.split(",")[0]}
-                  </div>
-                </div>
-              )
-            })
-          )}
-        </div>
+                    {/* Subject + Snippet */}
+                    <div className="mail-content" style={{ flex: 1, border: "none", display: "flex", alignItems: "center", gap: "6px", overflow: "hidden" }}>
+                      <span className="mail-subject" style={{ fontWeight: "600", color: "var(--text-bright)", fontSize: "13px", flexShrink: 0, maxWidth: "200px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {draft.subject || "(No subject)"}
+                      </span>
+                      <span style={{ color: "var(--text-muted)", opacity: 0.5, margin: "0 2px", fontSize: "12px" }}>—</span>
+                      <span className="mail-snippet" style={{ fontSize: "12px", color: "var(--text-dim)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {draft.message || "(No body content)"}
+                      </span>
+                    </div>
 
-        {/* Right — draft preview */}
-        {selectedDraft && (
-          <div style={{
-            flex: 1, display: "flex", flexDirection: "column",
-            overflow: "hidden", background: "var(--bg-panel)",
-          }}>
-            {/* Top bar */}
-            <div style={{
-              padding: "10px 16px", borderBottom: "1px solid var(--border-gold)",
-              display: "flex", alignItems: "center", justifyContent: "space-between",
-              flexShrink: 0,
-            }}>
+                    {/* Date — fixed 62px */}
+                    <div style={{ flexShrink: 0, fontSize: "12px", marginLeft: "12px", width: "62px", textAlign: "right", color: "var(--text-dim)" }}>
+                      {formatMailDate(draft.savedAt)}
+                    </div>
+                  </div>
+                )
+              })
+            )}
+          </div>
+        ) : (
+          <div style={{ flex: 1, overflowY: "auto", padding: "32px 40px", background: "var(--bg-panel)", animation: "fadeUp 0.3s ease both" }}>
+            <div style={{ marginBottom: "28px" }}>
               <button
                 onClick={() => setSelectedDraft(null)}
-                style={{
-                  background: "none", border: "none", cursor: "pointer",
-                  color: "var(--text-muted)", fontSize: "12px",
-                  fontFamily: "Raleway, sans-serif", padding: "4px 8px", borderRadius: "6px",
-                }}
-              >← Close</button>
-
-              <div style={{ display: "flex", gap: "8px" }}>
-                <button
-                  onClick={() => setShowDeleteModal(selectedDraft.id)}
-                  style={{
-                    padding: "6px 12px", borderRadius: "8px", cursor: "pointer",
-                    background: "rgba(217,48,37,0.08)",
-                    border: "1px solid rgba(217,48,37,0.25)",
-                    color: "#e84234", fontSize: "11px",
-                    fontFamily: "Raleway, sans-serif", fontWeight: "600",
-                  }}
-                >🗑️ Delete</button>
-
-                <button
-                  onClick={() => openInCompose(selectedDraft)}
-                  style={{
-                    padding: "6px 16px", borderRadius: "8px", cursor: "pointer",
-                    background: "linear-gradient(135deg, var(--gold-rich), var(--gold-light))",
-                    border: "none", color: "#000", fontSize: "11px",
-                    fontFamily: "Raleway, sans-serif", fontWeight: "700",
-                  }}
-                >✏️ Resume Draft</button>
-              </div>
+                style={{ display: "flex", alignItems: "center", gap: "6px", background: "none", border: "none", cursor: "pointer", color: "var(--gold-mid)", fontSize: "13px", fontWeight: "800", letterSpacing: "1px", padding: "8px 0" }}
+              >
+                <ChevronLeft size={16} /> DRAFTS
+              </button>
             </div>
 
-            {/* Draft content */}
-            <div style={{ flex: 1, overflowY: "auto", padding: "24px" }}>
-              {/* Subject */}
-              <h2 className="mail-detail-subject">
-                {selectedDraft.subject || "(No subject)"}
-              </h2>
-
-              {/* Meta */}
-              <div style={{ display: "flex", flexDirection: "column", gap: "8px", marginBottom: "20px" }}>
-                <div style={{
-                  display: "flex", alignItems: "center", gap: "8px",
-                  padding: "8px 12px", background: "var(--bg-card)",
-                  borderRadius: "8px", border: "1px solid var(--border-gold)",
-                }}>
-                  <span style={{ fontSize: "11px", color: "var(--text-muted)", width: "60px" }}>To</span>
-                  <span style={{ fontSize: "12px", color: selectedDraft.to ? "var(--text-bright)" : "var(--text-muted)" }}>
-                    {selectedDraft.to || "No recipient"}
-                  </span>
-                </div>
-                <div style={{
-                  display: "flex", alignItems: "center", gap: "8px",
-                  padding: "8px 12px", background: "var(--bg-card)",
-                  borderRadius: "8px", border: "1px solid var(--border-gold)",
-                }}>
-                  <span style={{ fontSize: "11px", color: "var(--text-muted)", width: "60px" }}>Saved</span>
-                  <span style={{ fontSize: "12px", color: "var(--text-bright)" }}>{selectedDraft.savedAt}</span>
+            <div style={{ maxWidth: "860px" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "32px" }}>
+                <h1 style={{ fontSize: "26px", fontFamily: "Cinzel, serif", color: "var(--text-bright)", letterSpacing: "1px", lineHeight: 1.3, margin: 0 }}>
+                  {selectedDraft.subject || "(No subject)"}
+                </h1>
+                <div style={{ display: "flex", gap: "10px" }}>
+                  <button 
+                    onClick={() => setShowDeleteModal(selectedDraft.id)} 
+                    className="chromeless-btn hover-error" 
+                    style={{ padding: "8px", border: "1px solid rgba(232,66,52,0.2)", borderRadius: "8px" }}
+                  >
+                    <Trash2 size={18} color="#e84234" />
+                  </button>
+                  <button 
+                    onClick={() => openInCompose(selectedDraft)} 
+                    className="btn" 
+                    style={{ padding: "8px 20px", fontSize: "12px" }}
+                  >
+                    RESUME DRAFT
+                  </button>
                 </div>
               </div>
 
-              <hr style={{ border: "none", borderTop: "1px solid var(--border-gold)", marginBottom: "20px" }} />
+              <div style={{ display: "flex", alignItems: "center", gap: "16px", marginBottom: "32px", paddingBottom: "24px", borderBottom: "1px solid var(--border-gold)" }}>
+                <div style={{ width: "48px", height: "48px", borderRadius: "50%", background: "rgba(232,66,52,0.1)", border: "1.5px solid rgba(232,66,52,0.3)", color: "#e84234", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: "900", fontSize: "20px", flexShrink: 0 }}>
+                  D
+                </div>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontWeight: "700", color: "#e84234", fontSize: "15px", marginBottom: "4px" }}>DRAFT MESSAGE</div>
+                  <div style={{ fontSize: "13px", color: "var(--text-muted)" }}>
+                    To: <strong style={{ color: "var(--gold-mid)" }}>{selectedDraft.to || "(No recipient)"}</strong>
+                    <span style={{ margin: "0 8px" }}>•</span>Last saved {selectedDraft.savedAt}
+                  </div>
+                </div>
+              </div>
 
-              {/* Body */}
-              <p style={{
-                fontSize: "14px", color: selectedDraft.message ? "var(--text-bright)" : "var(--text-muted)",
-                lineHeight: "1.8", whiteSpace: "pre-wrap", fontFamily: "Georgia, serif",
-                fontStyle: selectedDraft.message ? "normal" : "italic",
-              }}>
-                {selectedDraft.message || "(No message body)"}
-              </p>
+              <div style={{ minHeight: "300px" }}>
+                <div style={{ whiteSpace: "pre-wrap", lineHeight: "1.9", fontSize: "15px", color: "var(--text-bright)", fontFamily: "Inter, Raleway, sans-serif", maxWidth: "760px" }}>
+                  {selectedDraft.message || <em style={{ color: "var(--text-muted)" }}>(No message body)</em>}
+                </div>
+              </div>
 
-              {/* Draft notice */}
-              <div style={{
-                marginTop: "24px", padding: "10px 14px", borderRadius: "8px",
-                background: "rgba(212,160,23,0.06)", border: "1px solid rgba(212,160,23,0.15)",
-                fontSize: "11px", color: "var(--text-muted)",
-                display: "flex", alignItems: "center", gap: "8px",
-              }}>
-                <span>📝</span>
-                This is a draft — it has not been sent. Click Resume Draft to continue editing.
+              <div style={{ marginTop: "48px", padding: "24px", background: "rgba(232,66,52,0.03)", border: "1px solid rgba(232,66,52,0.15)", borderRadius: "12px", display: "flex", gap: "16px", alignItems: "center" }}>
+                <Shield size={24} color="#e84234" />
+                <div style={{ fontSize: "13px", color: "var(--text-muted)", lineHeight: 1.6 }}>
+                  This is a <strong>local draft</strong>. It remains on this device until sent or deleted. Encryption is performed only when the message is formally transmitted.
+                </div>
               </div>
             </div>
           </div>

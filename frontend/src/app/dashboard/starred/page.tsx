@@ -19,6 +19,7 @@ export default function StarredPage() {
 
   const [passInput, setPassInput]               = useState("")
   const [passError, setPassError]               = useState("")
+  const [showPassModal, setShowPassModal]       = useState(false)
   const [decrypting, setDecrypting]             = useState(false)
   const [loadingMail, setLoadingMail]           = useState(false)
   const [userEmail, setUserEmail]               = useState("")
@@ -61,6 +62,18 @@ export default function StarredPage() {
     return () => { unsub(); unsubLabel(); }
   }, [])
 
+  const formatMailDate = (timeStr: string) => {
+    if (!timeStr) return ""
+    const d = new Date(timeStr)
+    if (isNaN(d.getTime())) return timeStr.split(",")[0] || ""
+    const now = new Date()
+    const isToday = d.toDateString() === now.toDateString()
+    if (isToday) return d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true })
+    const isThisYear = d.getFullYear() === now.getFullYear()
+    if (isThisYear) return d.toLocaleDateString("en-US", { month: "short", day: "numeric" })
+    return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "2-digit" })
+  }
+
   const hasValidCid = (mail: any) =>
     mail?.cid && (mail.cid.startsWith("Qm") || mail.cid.startsWith("bafy"))
 
@@ -75,13 +88,15 @@ export default function StarredPage() {
         setLoadingMail(false); return
       }
       if (hasValidCid(mail)) {
-        const res = await fetch(`${getLocalNode(8080)}/ipfs/${mail.cid}`, { signal: AbortSignal.timeout(5000) }).catch(() => null)
-        if (res && res.ok) {
-          const parsed = await res.json()
-          let msg = parsed.message
-          let encrypted = msg.includes("-----BEGIN PGP MESSAGE-----")
+        try {
+          const { fetchFromIPFS } = await import("@/utils/ipfs")
+          const parsed = await fetchFromIPFS(mail.cid)
+          const msg = parsed.message || ""
+          const encrypted = msg.includes("-----BEGIN PGP MESSAGE-----")
           setSelectedMail({ ...mail, message: msg, isDecrypted: !encrypted, isEncrypted: encrypted, attachments: parsed.attachments || [] })
           setLoadingMail(false); return
+        } catch (e) {
+          console.warn("Manual fetch fallback failed:", e)
         }
       }
       const backup = mail.message || cached?.message || ""
@@ -90,15 +105,39 @@ export default function StarredPage() {
   }
 
   const decryptMail = async () => {
-    const u = JSON.parse(localStorage.getItem("user") || "{}")
-    if (passInput !== u.password) { setPassError("Incorrect password."); return }
+    const user = JSON.parse(localStorage.getItem("user") || "{}")
+    if (!selectedMail?.message) { setPassError("No message content."); return }
+    const password = passInput || user.password
+    if (!password) { setPassError("Password not found. Please enter your password."); return }
+
     setDecrypting(true)
+    setPassError("")
+
     try {
-      const dec = await decryptMessage(selectedMail.message, u.privateKey, passInput)
-      setSelectedMail({ ...selectedMail, message: dec, isDecrypted: true })
+      const decrypted = await decryptMessage(selectedMail.message, user.privateKey, password)
+      const cleanedBody = decrypted.replace(/\[IPFS Attachment: [^\]]+\]/g, "").trim()
+      const updated = { ...selectedMail, message: cleanedBody, isDecrypted: true }
+      setSelectedMail(updated)
+      await updateCachedMail(selectedMail.id, {
+        decryptedMessage: cleanedBody,
+        isDecrypted: true,
+        message: selectedMail.message,
+        attachments: selectedMail.attachments,
+      })
+      setShowPassModal(false)
       setPassInput("")
-    } catch { setPassError("Decryption failed.") }
-    finally { setDecrypting(false) }
+    } catch (err: any) {
+      const errMsg = err?.message || ""
+      if (errMsg.includes("session key") || errMsg.includes("decrypt")) {
+        setPassError("This message was not encrypted for your keys.")
+      } else if (errMsg.includes("passphrase") || errMsg.includes("password")) {
+        setPassError("Incorrect password.")
+      } else {
+        setPassError(`Decryption failed: ${errMsg}`)
+      }
+    } finally {
+      setDecrypting(false)
+    }
   }
 
   const handleSendReply = async () => {
@@ -106,8 +145,19 @@ export default function StarredPage() {
     if (!recipient || !replyBody.trim()) return
     setSendingReply(true)
     db.getUser(recipient, async (rData: any) => {
-      if (!rData?.publicKey) { setReplyStatus("error"); setReplyStatusMsg("Recipient not found."); setSendingReply(false); return; }
-      const enc = await encryptMessage(replyBody, rData.publicKey)
+      // Fallback: try Nostr mesh if GunDB can't find the recipient
+      if (!rData?.publicKey) {
+        setReplyStatusMsg("🌐 Searching global mesh...")
+        try {
+          const { nostr } = await import("@/utils/nostr")
+          const meshData = await nostr.find(recipient, true)
+          if (meshData?.publicKey) rData = meshData
+        } catch {}
+      }
+
+      // Proceed even without a key — encryptMessage handles unencrypted fallback
+      const pubKey = rData?.publicKey || null
+      const enc = await encryptMessage(replyBody, pubKey, recipient)
       await db.sendMail({ senderEmail: userEmail, receiverEmail: recipient, subject: replySubject, message: enc, time: new Date().toLocaleString(), status: "inbox", attachments: draftAttachments })
       setReplyStatus("success"); setReplyStatusMsg("Sent successfully.");
       setTimeout(() => { setComposeMode(null); setReplyBody(""); setDraftAttachments([]); }, 2000)
@@ -123,45 +173,68 @@ export default function StarredPage() {
 
   const renderMailRow = (mail: any) => {
     const isUnread = !mail.isRead && mail.receiverEmail === userEmail
+    const senderRaw = mail.senderEmail === userEmail ? "To: " + (mail.receiverEmail?.split("@")[0] || "Recipient") : (mail.senderEmail?.split("@")[0] || "Unknown")
+    const senderName = senderRaw.charAt(0).toUpperCase() + senderRaw.slice(1)
+    const colors = ["#d4a017", "#c9871a", "#9a6b0e", "#b8750a", "#8a5a08"]
+    const avatarColor = colors[(senderName.charCodeAt(0) || 0) % colors.length]
+
     return (
-      <div 
-        key={mail.id} 
+      <div
+        key={mail.id}
         onClick={() => openMail(mail)}
-        className={`mail-row-full ${isUnread ? 'unread' : ''}`}
-        style={{ 
-          display: "flex", alignItems: "center", padding: "12px 24px", 
-          borderBottom: "1px solid rgba(212,160,23,0.1)", cursor: "pointer",
-          gap: "24px", background: "var(--bg-card)", transition: "all 0.2s"
+        style={{
+          display: "flex",
+          alignItems: "center",
+          padding: "0 8px 0 4px",
+          minHeight: "52px",
+          cursor: "pointer",
+          borderBottom: "1px solid rgba(212,160,23,0.07)",
+          background: "transparent",
+          transition: "background 0.15s",
+          gap: 0,
+          position: "relative",
         }}
       >
-        <div style={{ display: "flex", gap: "16px", alignItems: "center", flexShrink: 0 }}>
-           <button onClick={e => { e.stopPropagation(); updateMailInStore(mail.id, { isStarred: false }) }} style={{ background: "none", border: "none", cursor: "pointer" }}>
-             <Star size={18} fill="var(--gold-mid)" color="var(--gold-mid)" />
-           </button>
-           <div style={{ width: "160px", fontSize: "14px", fontWeight: "700", color: "var(--text-bright)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-             {mail.senderEmail?.split("@")[0]}
-           </div>
+        {/* Avatar */}
+        <div style={{
+          flexShrink: 0, width: "36px", height: "36px", borderRadius: "50%",
+          background: avatarColor, display: "flex", alignItems: "center",
+          justifyContent: "center", fontWeight: "700", color: "#000",
+          fontSize: "14px", marginLeft: "4px", marginRight: "10px",
+        }}>
+          {senderName.charAt(0)}
         </div>
-        <div style={{ flex: 1, display: "flex", alignItems: "center", gap: "12px", overflow: "hidden" }}>
-           <span style={{ fontSize: "14px", fontWeight: "600", color: "var(--text-bright)", whiteSpace: "nowrap" }}>{mail.subject}</span>
-           <span style={{ fontSize: "13px", color: "var(--text-muted)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", opacity: 0.7 }}>
-             {" — "}
-             {mail.isDecrypted ? (
-               <>
-                 <span style={{ color: "var(--gold-mid)", fontWeight: "700", fontSize: "10px", textTransform: "uppercase", marginRight: "8px" }}>
-                   🔓 Decrypted
-                 </span>
-                 {mail.message?.slice(0, 60)}
-               </>
-             ) : mail.message?.includes("-----BEGIN") || mail.isEncrypted ? (
-               <span style={{ color: "var(--gold-mid)", fontWeight: "800", fontSize: "11px", textTransform: "uppercase" }}>
-                 🔒 Secure PGP Payload
-               </span>
-             ) : mail.message?.slice(0, 80)}
-           </span>
+
+        {/* Star Area — fixed 56px */}
+        <div onClick={(e) => e.stopPropagation()} style={{ flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", width: "56px", marginRight: "8px" }}>
+          <button
+            onClick={(e) => { e.stopPropagation(); updateMailInStore(mail.id, { isStarred: false }) }}
+            className="chromeless-btn"
+            style={{ padding: "2px" }}
+          >
+            <Star size={15} fill="var(--gold-mid)" color="var(--gold-mid)" />
+          </button>
         </div>
-        <div style={{ fontSize: "12px", color: "var(--text-dim)", textAlign: "right", width: "100px", flexShrink: 0 }}>
-           {mail.time?.split(",")[0]}
+
+        {/* Sender — fixed 160px */}
+        <div className="mail-sender" style={{ width: "160px", flexShrink: 0, marginRight: "12px", border: "none", fontSize: "13px", fontWeight: isUnread ? "700" : "500", color: isUnread ? "var(--text-bright)" : "var(--text-muted)" }}>
+          {senderName}
+        </div>
+
+        {/* Subject + Snippet */}
+        <div className="mail-content" style={{ flex: 1, border: "none", display: "flex", alignItems: "center", gap: "6px", overflow: "hidden" }}>
+          <span className="mail-subject" style={{ fontWeight: isUnread ? "700" : "500", color: isUnread ? "var(--text-bright)" : "var(--text-muted)", fontSize: "13px", flexShrink: 0, maxWidth: "200px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {mail.subject || "(No subject)"}
+          </span>
+          <span style={{ color: "var(--text-muted)", opacity: 0.5, margin: "0 2px", fontSize: "12px" }}>—</span>
+          <span className="mail-snippet" style={{ fontSize: "12px", color: "var(--text-dim)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+             {mail.isDecrypted ? mail.message?.slice(0, 100) : "🔒 Encrypted Content"}
+          </span>
+        </div>
+
+        {/* Date */}
+        <div style={{ flexShrink: 0, fontSize: "12px", marginLeft: "12px", width: "62px", textAlign: "right", color: "var(--text-dim)" }}>
+          {formatMailDate(mail.time)}
         </div>
       </div>
     )
@@ -195,46 +268,32 @@ export default function StarredPage() {
 
         <div style={{ minHeight: "400px" }}>
           {!selectedMail.isDecrypted ? (
-            <div style={{ 
-              padding: "56px 40px", background: "var(--bg-vault)", 
-              backdropFilter: "blur(20px)", border: "1px solid var(--border-gold)", 
-              borderRadius: "28px", maxWidth: "800px", 
-              boxShadow: "0 30px 80px rgba(0,0,0,0.2), var(--glow-gold-subtle)",
-              animation: "slideRight 0.6s cubic-bezier(0.23, 1, 0.32, 1) both"
+            <div style={{
+              padding: "48px 40px", background: "var(--bg-vault)",
+              border: "1px solid var(--border-gold)", borderRadius: "16px",
+              maxWidth: "600px", boxShadow: "var(--shadow-deep)"
             }}>
-              <div style={{ display: "flex", gap: "32px", alignItems: "flex-start" }}>
-                <div style={{ flexShrink: 0 }}>
-                   <Shield size={64} color="var(--gold-mid)" strokeWidth={1} />
-                </div>
-                <div style={{ flex: 1 }}>
-                  <h2 style={{ fontFamily: "Cinzel, serif", fontSize: "20px", color: "var(--text-bright)", marginBottom: "12px" }}>SECURE IDENTITY VAULT</h2>
-                  <p style={{ color: "var(--text-muted)", fontSize: "14px", marginBottom: "32px", lineHeight: "1.7" }}>
-                    This communication is end-to-end PGP encrypted. Verified identity is required to decrypt the payload.
+              <div style={{ display: "flex", gap: "24px", alignItems: "flex-start" }}>
+                <Shield size={48} color="var(--gold-mid)" strokeWidth={1} />
+                <div>
+                  <h2 style={{ fontFamily: "Cinzel, serif", fontSize: "18px", color: "var(--text-bright)", marginBottom: "8px" }}>ENCRYPTED CONTENT</h2>
+                  <p style={{ color: "var(--text-muted)", fontSize: "14px", lineHeight: 1.7 }}>
+                    This message is end-to-end encrypted. Enter your DMail password to unlock.
                   </p>
-                  <div style={{ position: "relative", maxWidth: "440px" }}>
-                    <input 
-                      type="password" 
-                      placeholder="Enter Vault Passphrase..." 
-                      value={passInput}
-                      onChange={(e) => setPassInput(e.target.value)}
-                      style={{ 
-                        width: "100%", background: "var(--bg-vault-input)", 
-                        border: "1px solid rgba(212,160,23,0.2)", borderRadius: "14px", 
-                        padding: "18px", color: "var(--gold-mid)", outline: "none", fontSize: "15px"
-                      }}
-                    />
-                    {passError && <div style={{ color: "#e84234", fontSize: "12px", marginTop: "8px" }}>{passError}</div>}
-                    <button 
-                      onClick={decryptMail}
-                      disabled={decrypting || !passInput}
-                      style={{
-                        marginTop: "24px", width: "100%",
-                        background: "linear-gradient(135deg, var(--gold-rich), var(--gold-light))",
-                        border: "none", borderRadius: "14px", padding: "18px",
-                        color: "#000", fontWeight: "900", cursor: "pointer", boxShadow: "var(--glow-gold)"
-                      }}
+                  <div style={{ marginTop: "20px", display: "flex", gap: "12px" }}>
+                    <div style={{
+                      display: "inline-flex", alignItems: "center", gap: "6px",
+                      background: "rgba(212,160,23,0.1)", padding: "8px 16px", borderRadius: "8px",
+                      border: "1px solid var(--border-gold)", color: "var(--gold-mid)", fontSize: "12px", fontWeight: "700"
+                    }}>
+                      <Lock size={12} /> ECC Curve25519
+                    </div>
+                    <button
+                      onClick={() => setShowPassModal(true)}
+                      className="btn"
+                      style={{ padding: "8px 24px", fontSize: "12px" }}
                     >
-                      {decrypting ? "AUTHENTICATING..." : "UNLOCK PAYLOAD"}
+                      UNLOCK MESSAGE
                     </button>
                   </div>
                 </div>
@@ -267,11 +326,38 @@ export default function StarredPage() {
                 <button onClick={handleSendReply} className="labeled-action-btn" style={{ padding: "12px 32px" }}>
                   {sendingReply ? "SENDING..." : "SEND SECURELY"}
                 </button>
-                {replyStatusMsg && <div style={{ fontSize: "12px", color: replyStatus === "error" ? "#e84234" : "var(--gold-mid)" }}>{replyStatusMsg}</div>}
+        {replyStatusMsg && <div style={{ fontSize: "12px", color: replyStatus === "error" ? "#e84234" : "var(--gold-mid)" }}>{replyStatusMsg}</div>}
              </div>
           </div>
         )}
       </div>
+      {showPassModal && (
+        <div className="modal-overlay">
+          <div className="modal-content" style={{ animation: "fadeUp 0.3s ease" }}>
+            <h3 style={{ fontFamily: "Cinzel, serif", color: "var(--gold-mid)", marginBottom: "16px" }}>Verify Identity</h3>
+            <p style={{ fontSize: "13px", color: "var(--text-muted)", marginBottom: "20px" }}>
+              Enter your DMail account password to securely decrypt this message.
+            </p>
+            <input
+              type="password"
+              className="auth-input"
+              value={passInput}
+              onChange={(e) => setPassInput(e.target.value)}
+              placeholder="Your password"
+              autoFocus
+              onKeyDown={(e) => e.key === "Enter" && decryptMail()}
+              style={{ marginBottom: "10px" }}
+            />
+            {passError && <p style={{ color: "#e84234", fontSize: "12px", marginBottom: "20px", fontWeight: "600" }}>{passError}</p>}
+            <div className="modal-actions" style={{ display: "flex", justifyContent: "flex-end", gap: "10px" }}>
+              <button onClick={() => setShowPassModal(false)} className="chromeless-btn" style={{ padding: "10px 20px" }}>CANCEL</button>
+              <button className="btn" onClick={decryptMail} disabled={decrypting}>
+                {decrypting ? "UNLOCKING..." : "UNLOCK"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 

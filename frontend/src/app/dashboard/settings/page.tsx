@@ -4,8 +4,9 @@ import { useEffect, useRef, useState } from "react"
 import { generateKeyPair, checkGunServer } from "@/utils/gun"
 import BlockchainVerify from "@/components/BlockchainVerify"
 import { getLabels, saveLabel, deleteLabel, createId, PRESET_COLORS, type Label } from "@/utils/labelStore"
+import { copyToClipboard } from "@/utils/clipboard"
+import { isPinataConfigured } from "@/utils/ipfs"
 
-import { getWeb3Client, isStorageReady, loginToStorage, setupSpace } from "@/utils/web3storage"
 
 type Section = "general" | "security" | "blockchain" | "labels" | "network" | "storage"
 
@@ -39,6 +40,9 @@ export default function SettingsPage() {
   const [editingLabel, setEditingLabel] = useState<Label | null>(null)
   const labelSectionRef = useRef<HTMLDivElement>(null)
 
+  // ── Network & Storage ──
+  const [pinataStatus, setPinataStatus] = useState<"idle" | "testing" | "ok" | "fail">("testing")
+
   // Removed network and storage states
   const [importKeyText, setImportKeyText] = useState("")
   const [importKeyError, setImportKeyError] = useState("")
@@ -54,9 +58,17 @@ export default function SettingsPage() {
     setInboxLayout(localStorage.getItem("settings_inboxLayout") || "comfortable")
     setEmailPreview(localStorage.getItem("settings_emailPreview") || "2lines")
     setLabels(getLabels(u.email || ""))
+    // Check if the backend relay proxy has Pinata configured
+    isPinataConfigured().then(isReady => {
+      setPinataStatus(isReady ? "ok" : "fail")
+    })
+
     if (window.location.hash === "#labels") {
       setActiveSection("labels")
       setTimeout(() => labelSectionRef.current?.scrollIntoView({ behavior: "smooth" }), 300)
+    }
+    if (window.location.hash === "#network") {
+      setActiveSection("network")
     }
   }, [])
 
@@ -96,7 +108,7 @@ export default function SettingsPage() {
 
   const handleCopyPrivateKey = () => {
     if (!user.privateKey) return
-    navigator.clipboard.writeText(user.privateKey)
+    copyToClipboard(user.privateKey)
     setCopiedKey(true)
     setTimeout(() => setCopiedKey(false), 2000)
   }
@@ -215,6 +227,8 @@ export default function SettingsPage() {
     </div>
   )
 
+  // ── Helpers ──
+
   return (
     <div style={{ display: "flex", height: "100%", overflow: "hidden" }}>
 
@@ -230,10 +244,11 @@ export default function SettingsPage() {
         }}>Settings</div>
 
         {([
-          { key: "general", icon: "⚙️", label: "General" },
-          { key: "security", icon: "🔐", label: "Security" },
-          { key: "blockchain", icon: "🔗", label: "Blockchain" },
-          { key: "labels", icon: "🏷️", label: "Labels" },
+                  { key: "general",    icon: "⚙️",  label: "General" },
+          { key: "security",   icon: "🔐",  label: "Security" },
+          { key: "blockchain", icon: "🔗",  label: "Blockchain" },
+          { key: "labels",     icon: "🏷️",  label: "Labels" },
+          { key: "network",    icon: "🌍",  label: "Network" },
         ] as { key: Section; icon: string; label: string }[]).map((s) => (
           <button key={s.key} style={sectionBtn(s.key)} onClick={() => setActiveSection(s.key)}>
             <span style={{ marginRight: "8px" }}>{s.icon}</span>{s.label}
@@ -340,7 +355,7 @@ export default function SettingsPage() {
             <div style={card}>
               <div style={{ marginBottom: "16px" }}>
                 <div style={{ fontSize: "15px", fontWeight: "700", color: "var(--text-bright)", marginBottom: "4px" }}>🔑 Your PGP Keys</div>
-                <div style={{ fontSize: "12px", color: "var(--text-muted)" }}>RSA-2048 key pair — generated on account creation</div>
+                <div style={{ fontSize: "12px", color: "var(--text-muted)" }}>ECC Curve25519 key pair — generated on account creation</div>
               </div>
 
               <div style={{ marginBottom: "16px" }}>
@@ -392,7 +407,7 @@ export default function SettingsPage() {
               }}>
                 <span style={{ fontSize: "16px" }}>🛡️</span>
                 <div>
-                  <div style={{ fontSize: "11px", fontWeight: "700", color: "#4caf6e" }}>RSA-2048 · OpenPGP.js</div>
+                  <div style={{ fontSize: "11px", fontWeight: "700", color: "#4caf6e" }}>ECC Curve25519 · OpenPGP.js</div>
                   <div style={{ fontSize: "10px", color: "var(--text-muted)", marginTop: "2px" }}>
                     Your messages are end-to-end encrypted. Nobody can read them without your private key.
                   </div>
@@ -494,9 +509,9 @@ export default function SettingsPage() {
               <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
                 {[
                   { label: "Account Email", value: user.email || "—" },
-                  { label: "Encryption", value: "RSA-2048 (OpenPGP)" },
-                  { label: "Storage", value: "GunDB + IPFS" },
-                  { label: "Key Protection", value: "Password-protected" },
+                  { label: "Encryption", value: "ECC Curve25519 (OpenPGP)" },
+                  { label: "Storage", value: "GunDB + IPFS (Kubo)" },
+                  { label: "Key Protection", value: "Passphrase-protected" },
                 ].map((row) => (
                   <div key={row.label} style={{
                     display: "flex", justifyContent: "space-between", alignItems: "center",
@@ -739,6 +754,115 @@ export default function SettingsPage() {
                 </div>
               </div>
             )}
+          </>
+        )}
+
+        {/* ══ NETWORK & STORAGE ════════════════════════════════ */}
+        {activeSection === "network" && (
+          <>
+            <h2 className="mail-detail-subject">🌍 Network & Global Storage</h2>
+            <p style={{ fontSize: "12px", color: "var(--text-muted)", marginBottom: "20px", lineHeight: "1.7" }}>
+              DMail uses <strong style={{ color: "var(--text-bright)" }}>Pinata</strong> to pin mail content to the global IPFS network.
+              Without this, your emails are only stored locally and cannot be read on other devices.
+            </p>
+
+            {/* Status banner */}
+            <div style={{
+              display: "flex", alignItems: "center", gap: "12px",
+              padding: "14px 18px", borderRadius: "12px", marginBottom: "20px",
+              background: pinataStatus === "ok"
+                ? "rgba(76,175,110,0.1)" : pinataStatus === "fail"
+                ? "rgba(217,48,37,0.08)" : "rgba(212,160,23,0.06)",
+              border: `1px solid ${pinataStatus === "ok"
+                ? "rgba(76,175,110,0.3)" : pinataStatus === "fail"
+                ? "rgba(217,48,37,0.25)" : "rgba(212,160,23,0.2)"}`,
+            }}>
+              <span style={{ fontSize: "22px" }}>
+                {pinataStatus === "ok" ? "🟢" : pinataStatus === "fail" ? "🔴" : "🟡"}
+              </span>
+              <div>
+                <div style={{ fontSize: "13px", fontWeight: "700", color: "var(--text-bright)" }}>
+                  {pinataStatus === "ok" ? "Global Communication Active"
+                    : pinataStatus === "fail" ? "Connection Failed"
+                    : "Global Communication Inactive"}
+                </div>
+                <div style={{ fontSize: "11px", color: "var(--text-muted)", marginTop: "2px" }}>
+                  {pinataStatus === "ok"
+                    ? "Mail content is pinned globally — any device can receive your emails."
+                    : pinataStatus === "fail" ? "Relay proxy is offline or pinning is unconfigured."
+                    : "Checking global backend proxy status..."}
+                </div>
+              </div>
+            </div>
+
+            {/* How it works */}
+            <div style={card}>
+              <div style={{ fontSize: "14px", fontWeight: "700", color: "var(--text-bright)", marginBottom: "14px" }}>
+                🔄 How Global Mail Works
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+                {[
+                  { step: "1", title: "You send a mail", desc: "The encrypted body is uploaded to Pinata (public IPFS network)" },
+                  { step: "2", title: "Pinata pins it globally", desc: "The content gets a CID (like QmXyz...) — accessible from any device on earth" },
+                  { step: "3", title: "GunDB broadcasts the index", desc: "A lightweight mail index { sender, subject, CID } is sent to global GunDB relays" },
+                  { step: "4", title: "Recipient's device receives", desc: "Their app sees the index via GunDB, fetches the content from IPFS, decrypts it" },
+                ].map((item) => (
+                  <div key={item.step} style={{
+                    display: "flex", alignItems: "flex-start", gap: "12px",
+                    padding: "10px 14px", background: "var(--bg-panel)",
+                    borderRadius: "8px", border: "1px solid var(--border-gold)",
+                  }}>
+                    <div style={{
+                      width: "24px", height: "24px", borderRadius: "50%", flexShrink: 0,
+                      background: "linear-gradient(135deg, var(--gold-rich), var(--gold-light))",
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                      fontSize: "11px", fontWeight: "800", color: "#000",
+                    }}>{item.step}</div>
+                    <div>
+                      <div style={{ fontSize: "12px", fontWeight: "700", color: "var(--text-bright)" }}>{item.title}</div>
+                      <div style={{ fontSize: "11px", color: "var(--text-muted)", marginTop: "2px" }}>{item.desc}</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Explanation card */}
+            <div style={card}>
+              <div style={{ fontSize: "15px", fontWeight: "700", color: "var(--text-bright)", marginBottom: "6px" }}>
+                🔑 Developer Pre-Configured
+              </div>
+              <div style={{ fontSize: "12px", color: "var(--text-muted)", marginBottom: "16px", lineHeight: "1.6" }}>
+                Global pinning is handled securely by the backend relay server. You do not need to configure any API keys or accounts. 
+                All cross-device syncing happens automatically in the background.
+              </div>
+            </div>
+
+            {/* GunDB relay info */}
+            <div style={card}>
+              <div style={{ fontSize: "14px", fontWeight: "700", color: "var(--text-bright)", marginBottom: "12px" }}>
+                📡 GunDB Global Relays
+              </div>
+              <div style={{ fontSize: "12px", color: "var(--text-muted)", marginBottom: "12px" }}>
+                These public relays carry your mail index globally. They are always active.
+              </div>
+              {[
+                "https://gun-manhattan.herokuapp.com/gun",
+                "https://gun-usa.herokuapp.com/gun",
+                "https://gun-eu.herokuapp.com/gun",
+                "https://dmail-relay.onrender.com/gun",
+              ].map(relay => (
+                <div key={relay} style={{
+                  display: "flex", alignItems: "center", gap: "8px",
+                  padding: "8px 12px", marginBottom: "6px",
+                  background: "var(--bg-panel)", borderRadius: "8px",
+                  border: "1px solid var(--border-gold)",
+                }}>
+                  <span style={{ color: "#4caf6e", fontSize: "10px" }}>●</span>
+                  <span style={{ fontFamily: "Courier New, monospace", fontSize: "11px", color: "var(--text-muted)" }}>{relay}</span>
+                </div>
+              ))}
+            </div>
           </>
         )}
       </div>

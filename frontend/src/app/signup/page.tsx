@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation"
 import { db, generateKeyPair } from "@/utils/gun"
 import Logo from "@/components/Logo"
 import { saveAccount } from "@/utils/accounts"
-
+import { copyToClipboard } from "@/utils/clipboard"
 interface User {
   name: string
   email: string
@@ -52,7 +52,7 @@ export default function Signup() {
     try {
       const cleanName = name.toLowerCase().replace(/\s+/g, "")
       const randomSuffix = Math.floor(1000 + Math.random() * 9000)
-      const generatedEmail = `${cleanName}${randomSuffix}@securemail.com`
+      const generatedEmail = `${cleanName}${randomSuffix}@dmail.com`
 
       const { publicKey, privateKey } = await generateKeyPair(name, generatedEmail, password)
 
@@ -224,7 +224,7 @@ export default function Signup() {
                 color: "var(--gold-light)", fontWeight: "600", wordBreak: "break-all",
               }}>{createdEmail}</span>
               <button
-                onClick={() => navigator.clipboard.writeText(createdEmail)}
+                onClick={() => copyToClipboard(createdEmail)}
                 style={{
                   background: "none", border: "1px solid var(--gold-mid)", borderRadius: "6px",
                   padding: "4px 10px", cursor: "pointer", color: "var(--gold-mid)",

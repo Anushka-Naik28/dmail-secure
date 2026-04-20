@@ -29,7 +29,7 @@ export default function NetworkStatus() {
         const result = await checkGunServer()
         if (result.reachable) {
           gunStatus = "online"
-          gunPeers  = 1 // Connected to global relay
+          gunPeers  = result.peers || 1 
         }
       } catch {
         gunStatus = "offline"
@@ -107,7 +107,9 @@ export default function NetworkStatus() {
                boxShadow: status.gun === "online" ? `0 0 8px ${getStatusColor(status.gun)}` : "none"
              }} />
              <span style={{ fontSize: "10px", color: "var(--text-muted)", fontFamily: "Raleway, sans-serif" }}>
-               {status.gun === "online" ? "Active" : status.gun === "checking" ? "..." : "Offline"}
+               {status.gun === "online" 
+                 ? `${status.peers.gun} Peers ${typeof window !== "undefined" && localStorage.getItem("dmail_discovered_relay") ? "(Mesh Relay)" : ""}` 
+                 : status.gun === "checking" ? "..." : "Offline"}
              </span>
           </div>
         </div>

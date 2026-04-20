@@ -23,6 +23,18 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     
     // 📡 Self-Healing Sync: Re-announce presence so other devices can find us
     db.reannounceUser()
+
+    // 🌍 Global Identity Heartbeat: Re-broadcasts our public key every 2 minutes
+    // so that any device on the network can always find us.
+    // IMPORTANT: Must be called ONCE here, not inside mail event listeners.
+    db.startIdentityHeartbeat()
+
+    // 📡 LAN-level IPFS PubSub Discovery (same WiFi network)
+    if (user.publicKey) {
+      import("@/utils/ipfs").then(mod => {
+        mod.startDiscoveryPubSub(user.email, user.publicKey)
+      })
+    }
   }, [])
 
   // Maintenance — snooze + self-destruct + OUTBOX PROCESSING

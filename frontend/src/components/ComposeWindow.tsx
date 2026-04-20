@@ -203,32 +203,70 @@ export default function ComposeWindow({
     setPowHash(null)
 
     db.getUser(recipientEmail, async (recipientData: any) => {
+      // If GunDB can't find them, try the Nostr mesh as a fallback
       if (!recipientData?.publicKey) {
-        setStatus("error")
-        setStatusMsg("Recipient not found. Check the email and try again.")
-        return
+        setStatusMsg("🌐 Searching global discovery mesh...")
+        try {
+          const { nostr } = await import("@/utils/nostr")
+          const meshData = await nostr.find(recipientEmail, true)
+          if (meshData?.publicKey) {
+            recipientData = meshData
+          }
+        } catch {}
+      }
+
+      // If still not found after all lookups — send unencrypted as last resort
+      if (!recipientData) {
+        recipientData = { email: recipientEmail, publicKey: null }
       }
 
       try {
         // ── Step 1: Proof-of-Work ──────────────────────────────
         setStatusMsg("⛏️ Computing proof-of-work...")
         const mailHash = await hashMailContent(user.email, recipientEmail, subject)
+        
+        let finalNonce = 0
+        let finalHash = ""
 
-        const { nonce, hash } = await computePoW(
-          mailHash,
-          3, // difficulty: 3 leading zeros ≈ ~4000 iterations, ~100ms
-          (n) => {
-            setPowProgress(n)
-            setStatusMsg(`⛏️ Proof-of-work... (${n.toLocaleString()} attempts)`)
+        if (typeof window !== "undefined" && !window.crypto?.subtle) {
+           console.warn("⚠️ WebCrypto subtle is missing. Skipping PoW.")
+           setPowHash("SKIP_INSECURE")
+        } else {
+          const { nonce, hash } = await computePoW(
+            mailHash,
+            3, // difficulty: 3 leading zeros ≈ ~4000 iterations, ~100ms
+            (n) => {
+              setPowProgress(n)
+              setStatusMsg(`⛏️ Proof-of-work... (${n.toLocaleString()} attempts)`)
+            }
+          )
+          setPowHash(hash)
+          finalNonce = nonce
+          finalHash = hash
+          // console.log(`✅ PoW solved: nonce=${nonce}, hash=${hash}`)
+        }
+
+        // ── Step 2: Encrypt (with Silent Identity Discovery) ──
+        let encryptedMessage = ""
+        let attempts = 0
+        while (attempts < 3) {
+          try {
+            setStatusMsg(attempts === 0 ? "🔒 Encrypting with PGP..." : "🔭 Still resolving recipient's identity...")
+            encryptedMessage = await encryptMessage(message, recipientData.publicKey, recipientData.email)
+            break // Success!
+          } catch (encErr: any) {
+            if (encErr.message.includes("IDENTITY_RECOVERY_FAILED") && attempts < 2) {
+              console.log("🛡️ [Compose] Discovery Storm in progress... retrying in 5s.")
+              attempts++
+              await new Promise(r => setTimeout(r, 5000))
+              // Fresh lookup to see if the storm found a better key
+              const freshData = await new Promise<any>(res => db.getUser(recipientEmail, res))
+              if (freshData?.publicKey) recipientData = freshData
+            } else {
+              throw encErr // Permanent failure or other error
+            }
           }
-        )
-
-        setPowHash(hash)
-        console.log(`✅ PoW solved: nonce=${nonce}, hash=${hash}`)
-
-        // ── Step 2: Encrypt ────────────────────────────────────
-        setStatusMsg("🔒 Encrypting with PGP...")
-        const encryptedMessage = await encryptMessage(message, recipientData.publicKey)
+        }
 
         // ── Step 3: Upload attachments ─────────────────────────
         const finalAttachments = []
@@ -266,7 +304,7 @@ export default function ComposeWindow({
           attachmentCount: finalAttachments.length,
           attachments:     finalAttachments,
           // ── PoW proof stored with mail ──
-          pow: { nonce, hash, difficulty: 3 },
+          pow: { nonce: finalNonce, hash: finalHash, difficulty: finalHash ? 3 : 0 },
         }
 
         if (scheduleDate && scheduleTime) {
@@ -305,9 +343,10 @@ export default function ComposeWindow({
 
         setTimeout(() => onClose(), 1500)
 
-      } catch {
+      } catch (err: any) {
         setStatus("error")
-        setStatusMsg("Failed to send. Please try again.")
+        setStatusMsg(`Error: ${err?.message || "Failed to send. Please try again."}`)
+        console.error("Critical Send Failure:", err)
       }
     })
   }
@@ -446,7 +485,7 @@ export default function ComposeWindow({
         <span style={{ fontSize: "12px", color: "var(--text-muted)", width: "40px", flexShrink: 0 }}>To</span>
         <input
           style={{ flex: 1, background: "none", border: "none", outline: "none", padding: "10px 0", fontSize: "13px", color: "var(--text-bright)", fontFamily: "Raleway, sans-serif" }}
-          placeholder="recipient@securemail.com"
+          placeholder="recipient@dmail.com"
           value={recipientEmail}
           onChange={(e) => { setRecipientEmail(e.target.value); setStatus("idle") }}
           disabled={status === "sending"}
@@ -462,6 +501,16 @@ export default function ComposeWindow({
           {encryptionReady === "ready"    && <>🔒 PGP Ready</>}
           {encryptionReady === "no-key"   && <>⚠️ No Key</>}
           {encryptionReady === "checking" && <>🔑 …</>}
+          
+          {typeof window !== "undefined" && !window.isSecureContext && (
+            <span style={{ 
+              marginLeft: "6px", padding: "1px 6px", borderRadius: "4px", 
+              background: "rgba(212,160,23,0.15)", color: "var(--gold-mid)",
+              fontSize: "10px", border: "1px solid rgba(212,160,23,0.3)"
+            }} title="HTTP Insecure Context: Software Fallback Enabled">
+              Software Mode
+            </span>
+          )}
         </div>
       </div>
 

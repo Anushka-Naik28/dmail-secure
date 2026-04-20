@@ -9,6 +9,7 @@ import {
   fetchPublicKey,
   type Contact,
 } from "@/utils/contacts"
+import { copyToClipboard } from "@/utils/clipboard"
 import PageHeader from "@/components/PageHeader"
 
 let contactsCache: Contact[] | null = null
@@ -171,7 +172,7 @@ export default function ContactsPage() {
   }
 
   const handleCopyKey = (key: string) => {
-    navigator.clipboard.writeText(key)
+    copyToClipboard(key)
     setCopiedKey(true)
     setTimeout(() => setCopiedKey(false), 2000)
   }

@@ -19,14 +19,18 @@ const nextConfig: NextConfig = {
   serverExternalPackages: ["kubo-rpc-client"],
   webpack: (config, { isServer }) => {
     if (!isServer) {
-      // Ensure Node.js crypto builtins are not polyfilled incorrectly in browser bundles
       config.resolve.fallback = {
         ...config.resolve.fallback,
-        crypto: false, // Let the browser use its native window.crypto
+        crypto: false,
         stream: false,
         buffer: false,
+        fs: false,
+        net: false,
+        tls: false,
       }
     }
+    // Ignore optional gun dependencies
+    config.externals = [...(config.externals || []), { "aws-sdk": "aws-sdk", "node-webcrypto-p11": "node-webcrypto-p11" }];
     return config
   },
 }

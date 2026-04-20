@@ -16,6 +16,7 @@ import {
   type BlockchainIdentity,
   type VerificationStatus,
 } from "@/utils/blockchain"
+import { copyToClipboard } from "@/utils/clipboard"
 
 export default function BlockchainVerify() {
   const [status, setStatus]         = useState<VerificationStatus>("unverified")
@@ -129,7 +130,7 @@ export default function BlockchainVerify() {
 
   const handleCopyAddress = () => {
     if (!identity?.walletAddress) return
-    navigator.clipboard.writeText(identity.walletAddress)
+    copyToClipboard(identity.walletAddress)
     setCopiedAddress(true)
     setTimeout(() => setCopiedAddress(false), 2000)
   }
@@ -197,10 +198,10 @@ export default function BlockchainVerify() {
           >{copiedAddress ? "✅ Copied!" : "📋 Copy Address"}</button>
 
           
+            <a
             href={getEtherscanLink(identity.walletAddress, identity.chainId)}
             target="_blank"
             rel="noopener noreferrer"
-            <a
             style={{
               padding: "8px 14px", borderRadius: "8px",
               background: "none", border: "1px solid var(--border-gold)",

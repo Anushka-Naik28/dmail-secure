@@ -94,6 +94,13 @@ function LoginForm() {
       localStorage.setItem("user", JSON.stringify(userObj))
       saveAccount(userObj)
 
+      // 📡 Initialise Nostr DM keys so this device can send/receive via free global relays
+      import("@/utils/nostr").then(({ nostr }) => {
+        nostr.initUserKeys(userData.email, userData.password).then(pubkey => {
+          console.log(`📡 [Nostr] Relay keys ready. Pubkey: ${pubkey.slice(0, 12)}...`)
+        })
+      })
+
       setLoginMessage({ text: `Welcome back, ${userData.name}!`, type: "success" })
       setLoading(false)
       setTimeout(() => router.push("/dashboard/inbox"), 1200)

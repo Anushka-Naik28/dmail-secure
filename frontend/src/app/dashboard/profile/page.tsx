@@ -3,6 +3,8 @@
 import { useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
 import { getCounts, subscribe } from "@/utils/mailStore"
+import { copyToClipboard } from "@/utils/clipboard"
+import { db } from "@/utils/gun"
 
 export default function ProfilePage() {
   const router = useRouter()
@@ -13,6 +15,45 @@ export default function ProfilePage() {
   
   const [copiedPrivate, setCopiedPrivate] = useState(false)
   const [showFullPrivateKey, setShowFullPrivateKey] = useState(false)
+
+  const [syncing, setSyncing] = useState(false)
+  const [syncStatus, setSyncStatus] = useState<"idle" | "success" | "error">("idle")
+
+  const syncIdentity = async () => {
+    setSyncing(true)
+    setSyncStatus("idle")
+    
+    try {
+      const { isKeyValid, db } = await import("@/utils/gun")
+      const localUser = JSON.parse(localStorage.getItem("user") || "{}")
+      
+      const isValid = await isKeyValid(localUser.publicKey)
+      if (!isValid) {
+        console.warn("🚨 Local public key is corrupted (Length:", localUser.publicKey?.length, "). Attempting Auto-Repair...")
+        const repair = await db.repairIdentity()
+        if (repair.success) {
+           setSyncStatus("success")
+           alert(`✅ Identity Repaired & Synced!\nYour public key has been restored (New Length: ${repair.length} chars). Others can now find you.`)
+           setSyncing(false)
+           return
+        } else {
+           setSyncStatus("error")
+           alert(`❌ Identity Corruption: Repair failed (${repair.error}). Please log out and back in to fully reset your identity.`)
+           setSyncing(false)
+           return
+        }
+      }
+
+      await db.reannounceUser()
+      setSyncStatus("success")
+      setTimeout(() => setSyncStatus("idle"), 3000)
+    } catch (e) {
+      console.error("Sync failed:", e)
+      setSyncStatus("error")
+    }
+    
+    setSyncing(false)
+  }
 
   useEffect(() => {
     if (typeof window === "undefined") return
@@ -31,14 +72,14 @@ export default function ProfilePage() {
 
   const copyPublicKey = () => {
     if (!user?.publicKey) return
-    navigator.clipboard.writeText(user.publicKey)
+    copyToClipboard(user.publicKey)
     setCopiedPublic(true)
     setTimeout(() => setCopiedPublic(false), 2000)
   }
 
   const copyPrivateKey = () => {
     if (!user?.privateKey) return
-    navigator.clipboard.writeText(user.privateKey)
+    copyToClipboard(user.privateKey)
     setCopiedPrivate(true)
     setTimeout(() => setCopiedPrivate(false), 2000)
   }
@@ -128,6 +169,31 @@ export default function ProfilePage() {
             </span>
           )}
         </div>
+
+        <button 
+          onClick={syncIdentity} 
+          disabled={syncing}
+          style={{ 
+            marginTop: "16px",
+            fontSize: "12px", padding: "8px 20px", borderRadius: "20px", 
+            cursor: syncing ? "not-allowed" : "pointer",
+            fontFamily: "Raleway, sans-serif", fontWeight: "700",
+            border: "1px solid var(--border-gold)",
+            transition: "all 0.2s ease",
+            background: 
+              syncStatus === "success" ? "rgba(76,175,110,0.2)" : 
+              syncStatus === "error" ? "rgba(217,48,37,0.2)" : 
+              syncing ? "rgba(212,160,23,0.1)" : "rgba(212,160,23,0.05)",
+            color: 
+              syncStatus === "success" ? "#4caf6e" : 
+              syncStatus === "error" ? "#e84234" : "var(--gold-mid)"
+          }}
+        >
+          {syncing ? "📡 Syncing..." : 
+           syncStatus === "success" ? "✅ Identity Synced!" : 
+           syncStatus === "error" ? "❌ Sync Failed" : 
+           "🔄 Sync Identity with Network"}
+        </button>
       </div>
 
       {/* Stats */}
@@ -204,7 +270,7 @@ export default function ProfilePage() {
           </button>
           <button onClick={() => {
             if (user.did) {
-              navigator.clipboard.writeText(user.did)
+              copyToClipboard(user.did)
               setCopiedPublic(true) // Reuse state for toast
               setTimeout(() => setCopiedPublic(false), 2000)
             }

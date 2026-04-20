@@ -432,7 +432,7 @@ body {
 }
 
 .mail-row.unread {
-  background: rgba(212,160,23,0.03);
+  /* Unread tint — inline style on the row handles stronger highlight */
 }
 
 .mail-row.unread .mail-sender {
@@ -446,27 +446,24 @@ body {
 }
 
 .mail-row {
-  height: 52px; /* Slightly taller for premium feel */
-  display: grid;
-  grid-template-columns: 48px 40px 180px 1fr 100px; /* Fixed grid for perfect alignment */
+  display: flex;
   align-items: center;
-  padding: 0 16px;
+  min-height: 52px;
   border-bottom: 1px solid var(--mail-row-border);
   cursor: pointer;
   position: relative;
-  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: background 0.15s ease;
   user-select: none;
   background: transparent;
 }
 
 .mail-row:hover {
-  background: rgba(212,160,23,0.04);
+  background: rgba(212,160,23,0.05) !important;
   z-index: 2;
-  box-shadow: 0 4px 12px rgba(0,0,0,0.1);
 }
 
 .mail-row.selected {
-  background: rgba(212,160,23,0.08);
+  background: rgba(212,160,23,0.09) !important;
   border-left: 3px solid var(--gold-mid);
 }
 

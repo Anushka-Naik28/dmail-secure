@@ -15,6 +15,7 @@ import {
   showLocalNotification,
 } from "@/utils/pwa"
 import { subscribe, getMails } from "@/utils/mailStore"
+import { startRelayDiscovery } from "@/utils/gun"
 
 export default function PWAProvider({ children }: { children: React.ReactNode }) {
   const [showInstallBanner, setShowInstallBanner] = useState(false)
@@ -27,6 +28,13 @@ export default function PWAProvider({ children }: { children: React.ReactNode })
   useEffect(() => {
     // Register SW
     registerServiceWorker()
+
+    // Start Zero-Config Relay Discovery (Mesh Networking)
+    startRelayDiscovery()
+
+    // Start Identity Heartbeat (Auto-repair corrupted cloud records)
+    const { db } = require("@/utils/gun")
+    db.startIdentityHeartbeat()
 
     // Init install prompt listener
     initInstallPrompt()

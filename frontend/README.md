@@ -186,8 +186,8 @@ Your identity is your email address. No phone number, no recovery email, no comp
 ```json
 {
   "id": "msg_1234567890",
-  "senderEmail": "alice@securemail.com",
-  "receiverEmail": "bob@securemail.com",
+  "senderEmail": "alice@dmail.com",
+  "receiverEmail": "bob@dmail.com",
   "subject": "encrypted",
   "message": "-----BEGIN PGP MESSAGE-----...",
   "cid": "QmXyz...",
