@@ -68,8 +68,8 @@ export default function PageHeader({
       )}
 
       {/* Header Row (Title + Count + Extra Actions) */}
-      <div className="inbox-header-row" style={{ margin: 0, padding: 0, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-        <h2 className="inbox-title" style={{ margin: 0, display: "flex", alignItems: "center", gap: "10px" }}>
+      <div className="inbox-header-row" style={{ margin: 0, padding: "8px 0 16px 0", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        <h2 style={{ fontSize: "24px", fontWeight: "700", color: "var(--text-bright)", margin: 0, display: "flex", alignItems: "center", gap: "10px" }}>
           <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
             {title}
             {count !== undefined && count > 0 && (

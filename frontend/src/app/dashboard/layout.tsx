@@ -1,35 +1,105 @@
 "use client"
-import GunStatusBanner from "@/components/GunStatusBanner"
-import { useState, useEffect } from "react"
+import dynamic from "next/dynamic"
+import { useState, useEffect, useRef } from "react"
 import { usePathname } from "next/navigation"
 import Header from "@/components/Header"
 import Sidebar from "@/components/Sidebar"
-import OfflineQueueProcessor from "@/components/offlineQueueProcessor"
-import ComposeWindow from "@/components/ComposeWindow"
 import { initMailStore, updateMailInStore, getAllRaw } from "@/utils/mailStore"
+import { initLabelSync } from "@/utils/labelStore"
 import { db } from "@/utils/gun"
 import { LabelProvider } from "@/context/LabelContext"
+import RouteProgressBar from "@/components/RouteProgressBar"
+
+// 🚀 Lazy Load heavy components that aren't immediately critical
+const GunStatusBanner = dynamic(() => import("@/components/GunStatusBanner"), { ssr: false })
+const OfflineQueueProcessor = dynamic(() => import("@/components/offlineQueueProcessor"), { ssr: false })
+const ComposeWindow = dynamic(() => import("@/components/ComposeWindow"), { ssr: false })
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const [isSidebarOpen, setIsSidebarOpen] = useState(true)
   const [showCompose, setShowCompose] = useState(false)
   const pathname = usePathname()
+  const isInitialized = useRef(false)
 
+  // 1. Initial Data Setup (Run once)
   useEffect(() => {
-    if (typeof window === "undefined") return
+    if (isInitialized.current) return
+    isInitialized.current = true
+
     const user = JSON.parse(localStorage.getItem("user") || "{}")
     if (!user.email) return
-    initMailStore(user.email)
     
-    // 📡 Self-Healing Sync: Re-announce presence so other devices can find us
+    initMailStore(user.email)
+    initLabelSync(user.email)
+    
+    // ⚡ [Fast Path] Initialize Real-Time Relay
+    if (user.email && user.fastPublicKey && user.fastPrivateKey) {
+      import("@/utils/relay").then(m => {
+        m.connectRelay(user.email, { public: user.fastPublicKey, private: user.fastPrivateKey })
+      })
+    }
+    
+    // 🌍 Decentralized Heartbeats
     db.reannounceUser()
-
-    // 🌍 Global Identity Heartbeat: Re-broadcasts our public key every 2 minutes
-    // so that any device on the network can always find us.
-    // IMPORTANT: Must be called ONCE here, not inside mail event listeners.
     db.startIdentityHeartbeat()
 
-    // 📡 LAN-level IPFS PubSub Discovery (same WiFi network)
+    // 🔑 Nostr Setup (Lazy loaded inside)
+    if (user.email && user.password) {
+      import("@/utils/nostr").then(({ nostr }) => {
+        nostr.initUserKeys(user.email, user.password).then(() => {
+          nostr.onMail(async (mail: any) => {
+            if (!mail?.id && !mail?.subject) return
+            const { gun } = await import("@/utils/gun")
+            const { filterIncomingMail } = await import("@/utils/spamFilter")
+            
+            const id = mail.id || `nostr_${Date.now()}_${Math.random().toString(36).slice(2)}`
+            
+            // 🛡️ [Phase 11 Fix] Nostr is a DELIVERY transport, not a data source.
+            // When mail arrives via Nostr, write it into the canonical user_mail_index
+            // on the shared relay so ALL devices see it — not just local memory.
+            const existingMail = getAllRaw().find(m => m.id === id)
+            let finalStatus = mail.status || "inbox"
+            let finalFlaggedReason = mail.flaggedReason
+            let finalSpamScore = mail.spamScore
+
+            if (!existingMail || existingMail.spamScore === undefined) {
+              const decision = await filterIncomingMail(mail, user.email)
+              finalStatus = decision.status || "inbox"
+              finalFlaggedReason = decision.flaggedReason
+              finalSpamScore = decision.spamScore
+            } else {
+              finalStatus = existingMail.status
+              finalFlaggedReason = existingMail.flaggedReason
+              finalSpamScore = existingMail.spamScore
+            }
+            
+            const indexEntry = {
+              ...mail,
+              id,
+              status: finalStatus,
+              senderStatus: mail.senderEmail?.toLowerCase() === user.email?.toLowerCase() ? "sent" : undefined,
+              flaggedReason: finalFlaggedReason,
+              spamScore: finalSpamScore,
+              fromNostr: true,
+              isRead: existingMail ? existingMail.isRead : false,
+            }
+
+            // Write into the canonical index so cross-device sync picks it up
+            const receiverEmail = mail.receiverEmail?.trim().toLowerCase()
+            const senderEmail = mail.senderEmail?.trim().toLowerCase()
+            if (receiverEmail) gun.get(`user_mail_index:${receiverEmail}`).get(id).put(indexEntry)
+            if (senderEmail && senderEmail !== receiverEmail) gun.get(`user_mail_index:${senderEmail}`).get(id).put({ ...indexEntry, status: "sent", senderStatus: "sent" })
+            
+            // Also store full body in securemail_mails
+            const { receiverPublicKey, ...mailToStore } = indexEntry as any
+            gun.get("securemail_mails").get(id).put({ ...mailToStore, id })
+          })
+          db.reannounceUser()
+        }).catch(e => console.warn("[Nostr] Key init failed:", e))
+      })
+    }
+
+    // 📡 IPFS Discovery
     if (user.publicKey) {
       import("@/utils/ipfs").then(mod => {
         mod.startDiscoveryPubSub(user.email, user.publicKey)
@@ -37,27 +107,31 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     }
   }, [])
 
-  // Maintenance — snooze + self-destruct + OUTBOX PROCESSING
+  // 2. Background Maintenance (Throttle to reduce CPU)
   useEffect(() => {
-    if (typeof window === "undefined") return
-
     const interval = setInterval(async () => {
+      // 🧊 Only run if tab is active to save resources
+      if (document.hidden) return
+
       const user = JSON.parse(localStorage.getItem("user") || "{}")
       if (!user.email) return
 
       const now = Date.now()
+      const allMails = getAllRaw()
 
-      // 1. Process Snooze & Expiry
-      getAllRaw().forEach((mail: any) => {
-        if (!mail?.id) return
+      // Process Snooze & Expiry in chunks to avoid blocking main thread
+      for (let i = 0; i < allMails.length; i++) {
+        const mail = allMails[i]
+        if (!mail?.id) continue
+        
         if (mail.expiryTime && now > mail.expiryTime) {
           updateMailInStore(mail.id, { status: "purged" })
         } else if (mail.status === "snoozed" && mail.snoozeUntil && now > mail.snoozeUntil) {
           updateMailInStore(mail.id, { status: "inbox", snoozeUntil: null })
         }
-      })
+      }
 
-      // 2. Process Scheduled Mails (Outbox)
+      // 🕒 Process Outbox
       const scheduledKey = `scheduled_${user.email}`
       const scheduledMails = JSON.parse(localStorage.getItem(scheduledKey) || "[]")
       if (scheduledMails.length > 0) {
@@ -67,16 +141,13 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         for (const sMail of scheduledMails) {
           if (now >= sMail.targetTime) {
             try {
-              // Time has come! Prepare and dispatch directly to Gun network
               const dispatchMail = { ...sMail, time: new Date().toLocaleString() }
               delete dispatchMail.targetTime
               delete dispatchMail.targetTimeText
               delete dispatchMail.id
-
               await db.sendMail(dispatchMail)
               hasChanges = true
             } catch (err) {
-              console.warn("Scheduled send failed, will retry next tick", err)
               remaining.push(sMail)
             }
           } else {
@@ -89,12 +160,12 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           window.dispatchEvent(new Event("storage"))
         }
       }
-    }, 15000) // Polls every 15 seconds
+    }, 60000) 
 
     return () => clearInterval(interval)
-  }, [pathname])
+  }, [])
 
-  // Listen for compose trigger from anywhere in the app
+  // 3. Compose Toggle Listener
   useEffect(() => {
     const handleOpenCompose = () => setShowCompose(true)
     window.addEventListener("openCompose", handleOpenCompose)
@@ -103,9 +174,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
   return (
     <LabelProvider>
+      <RouteProgressBar />
       <GunStatusBanner />
       <div className="dashboard">
-
         <Header
           onToggle={() => setIsSidebarOpen(!isSidebarOpen)}
           onCompose={() => setShowCompose(true)}
@@ -115,12 +186,20 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             isOpen={isSidebarOpen}
             onCompose={() => setShowCompose(true)}
           />
-          <main className="mail-area">{children}</main>
+          <main 
+            className="mail-area" 
+            key={pathname}
+            style={{ 
+              animation: "fadeIn 0.3s ease-out",
+              height: "100%", overflow: "hidden"
+            }}
+          >
+            {children}
+          </main>
         </div>
 
         <OfflineQueueProcessor />
 
-        {/* Floating compose window — rendered at layout level so it persists across routes */}
         {showCompose && (
           <ComposeWindow onClose={() => setShowCompose(false)} />
         )}

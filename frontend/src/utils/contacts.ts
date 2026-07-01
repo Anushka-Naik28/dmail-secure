@@ -1,4 +1,4 @@
-import { gun, getOpenPGP } from "@/utils/gun"
+import { gun, getOpenPGP, isKeyValid, repairPublicKeyFromPrivate, sanitizeArmoredKey, decryptVaultKey, derivePGPPassphrase } from "@/utils/gun"
 
 const CONTACTS_KEY = "securemail_contacts"
 
@@ -10,9 +10,34 @@ export interface Contact {
   addedAt: number
 }
 
-const encryptContacts = async (contacts: Contact[], publicKey: string): Promise<string> => {
+const encryptContacts = async (
+  contacts: Contact[], 
+  publicKey: string,
+  privateKeyArmored?: string
+): Promise<string> => {
   const openpgp = await getOpenPGP();
-  const pubKey = await openpgp.readKey({ armoredKey: publicKey });
+  
+  let validKey = sanitizeArmoredKey(publicKey);
+  
+  // 🛡️ [Self-Healing] If key is invalid/truncated, attempt repair via private key
+  if (!(await isKeyValid(validKey)) && privateKeyArmored) {
+    console.warn("🛡️ [Contacts] Degraded public key detected. Attempting repair...");
+    // Use password from localStorage if available for repair
+    const user = JSON.parse(localStorage.getItem("user") || "{}");
+    const repaired = await repairPublicKeyFromPrivate(privateKeyArmored, user.password);
+    if (repaired) {
+      console.log("✅ [Contacts] Identity repaired successfully.");
+      validKey = repaired;
+      // Update local storage to prevent future failures
+      const user = JSON.parse(localStorage.getItem("user") || "{}");
+      if (user.email) {
+        user.publicKey = repaired;
+        localStorage.setItem("user", JSON.stringify(user));
+      }
+    }
+  }
+
+  const pubKey = await openpgp.readKey({ armoredKey: validKey });
 
   const encrypted = await openpgp.encrypt({
     message: await openpgp.createMessage({ text: JSON.stringify(contacts) }),
@@ -30,8 +55,10 @@ const decryptContacts = async (
 ): Promise<Contact[]> => {
   const openpgp = await getOpenPGP()
   const privateKey = await openpgp.decryptKey({
-    privateKey: await openpgp.readPrivateKey({ armoredKey: privateKeyArmored }),
-    passphrase: password,
+    privateKey: await openpgp.readPrivateKey({ 
+      armoredKey: decryptVaultKey(privateKeyArmored, password) 
+    }),
+    passphrase: derivePGPPassphrase(password),
   })
 
   let armored;
@@ -51,10 +78,11 @@ const decryptContacts = async (
 export const saveContacts = async (
   contacts: Contact[],
   userEmail: string,
-  publicKey: string
+  publicKey: string,
+  privateKeyArmored?: string
 ): Promise<void> => {
   try {
-    const encrypted = await encryptContacts(contacts, publicKey)
+    const encrypted = await encryptContacts(contacts, publicKey, privateKeyArmored)
     gun.get(CONTACTS_KEY).get(userEmail).put({ encrypted, updatedAt: Date.now() })
     localStorage.setItem(`contacts_${userEmail}`, JSON.stringify(contacts))
   } catch (err) {
@@ -125,7 +153,7 @@ export const addContact = async (
         addedAt:   Date.now(),
       }
       const updated = [...existing, newContact]
-      await saveContacts(updated, userEmail, publicKey)
+      await saveContacts(updated, userEmail, publicKey, privateKeyArmored)
       resolve(updated)
     })
   })
@@ -141,7 +169,7 @@ export const deleteContact = async (
   return new Promise((resolve) => {
     loadContacts(userEmail, privateKeyArmored, password, async (existing) => {
       const updated = existing.filter((c) => c.id !== contactId)
-      await saveContacts(updated, userEmail, publicKey)
+      await saveContacts(updated, userEmail, publicKey, privateKeyArmored)
       resolve(updated)
     })
   })

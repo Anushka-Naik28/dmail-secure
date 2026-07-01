@@ -1,377 +1,417 @@
 "use client"
 
-import { useEffect, useState } from "react"
-import { getThreads, subscribe, updateMailInStore, type Thread } from "@/utils/mailStore"
-import { getCachedMail, updateCachedMail } from "@/utils/mailCache"
-import { decryptMessage } from "@/utils/gun"
-import { getLocalNode } from "@/utils/ipfs"
-import PageHeader from "@/components/PageHeader"
-import {
-  RefreshCw, MoreVertical, Trash2, CheckSquare, Square,
-  Star, ChevronLeft, Download, FileText, Paperclip, Shield, Lock,
-  Archive, Inbox
-} from "lucide-react"
+import { useEffect, useState, useMemo, useRef } from "react"
+import { useRouter, useSearchParams } from "next/navigation"
+import { decryptMessage, db, cleanMessage } from "@/utils/gun"
+import { Star, Trash2, Mail, Reply, Forward, Lock, Search, ArrowLeft, Paperclip, Send, RefreshCw, Archive, Inbox, Check, Tag } from "lucide-react"
+import { subscribe, updateMailInStore, getMails, initMailStore } from "@/utils/mailStore"
+import { getLabels, getMailLabels, toggleMailLabel, subscribeLabelStore, type Label } from "@/utils/labelStore"
+import { useLabel } from "@/context/LabelContext"
+import MailRow from "@/components/MailRow"
+
+type Tab = "All" | "Unread"
 
 export default function ArchivePage() {
-  const [threads, setThreads] = useState<Thread[]>([])
-  const [selectedMail, setSelectedMail] = useState<any | null>(null)
-  const [searchQuery, setSearchQuery] = useState("")
+  const router = useRouter()
+  const searchParams = useSearchParams()
+  const urlSearch = searchParams.get("search") || ""
+  const { activeLabelId, setActiveLabelId } = useLabel()
+  
+  const [mails, setMails] = useState<any[]>([])
+  const [selectedMail, setSelectedMail] = useState<any>(null)
+  const [activeTab, setActiveTab] = useState<Tab>("All")
   const [userEmail, setUserEmail] = useState("")
-  const [selectedIds, setSelectedIds] = useState<string[]>([])
-  const [isRefreshing, setIsRefreshing] = useState(false)
-  const [loadingMail, setLoadingMail] = useState(false)
-
-  // ── Decryption State ──
-  const [passInput, setPassInput] = useState("")
-  const [passError, setPassError] = useState("")
-  const [showPassModal, setShowPassModal] = useState(false)
+  const [vaultPassword, setVaultPassword] = useState("")
   const [decrypting, setDecrypting] = useState(false)
+  const [decryptError, setDecryptError] = useState("")
+  const [decryptedContent, setDecryptedContent] = useState<string | null>(null)
+  const [replyMode, setReplyMode] = useState<"reply" | "forward" | null>(null)
+  const [searchQuery, setSearchQuery] = useState(urlSearch)
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const [isRefreshing, setIsRefreshing] = useState(false)
+  const [userLabels, setUserLabels] = useState<Label[]>([])
+  const [showLabelMenu, setShowLabelMenu] = useState(false)
+
+  useEffect(() => {
+    if (urlSearch) setSearchQuery(urlSearch)
+  }, [urlSearch])
 
   useEffect(() => {
     if (typeof window === "undefined") return
     const user = JSON.parse(localStorage.getItem("user") || "{}")
-    if (user.email) setUserEmail(user.email)
-    setThreads(getThreads("archived"))
-    const unsub = subscribe(() => setThreads(getThreads("archived")))
-    return () => unsub()
+    if (user.email) {
+      setUserEmail(user.email)
+      initMailStore(user.email)
+    }
+
+    const updateMails = () => {
+      setMails(getMails("archived"))
+      setUserLabels(getLabels(user.email))
+    }
+    updateMails()
+    const unsub = subscribe(updateMails)
+    const unsubLabels = subscribeLabelStore(updateMails)
+    
+    return () => {
+      unsub()
+      unsubLabels()
+    }
   }, [])
 
-  const formatMailDate = (timeStr: string) => {
-    if (!timeStr) return ""
-    const d = new Date(timeStr)
-    if (isNaN(d.getTime())) return timeStr.split(",")[0] || ""
-    const now = new Date()
-    const isToday = d.toDateString() === now.toDateString()
-    if (isToday) return d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true })
-    const isThisYear = d.getFullYear() === now.getFullYear()
-    if (isThisYear) return d.toLocaleDateString("en-US", { month: "short", day: "numeric" })
-    return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "2-digit" })
-  }
+  const currentSelectedMail = useMemo(() => {
+    if (!selectedMail) return null
+    return mails.find(m => m.id === selectedMail.id) || selectedMail
+  }, [mails, selectedMail])
 
-  const filteredThreads = threads.filter((t) =>
-    t.messages.some(m =>
-      m.subject?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      m.senderEmail?.toLowerCase().includes(searchQuery.toLowerCase())
-    )
-  )
-
-  const hasValidCid = (mail: any) =>
-    mail?.cid && (mail.cid.startsWith("Qm") || mail.cid.startsWith("bafy"))
-
-  const openMail = async (thread: Thread) => {
-    const mail = thread.lastMessage
-    setLoadingMail(true)
-    try {
-      const cached = await getCachedMail(mail.id)
-      if (cached?.decryptedMessage) {
-        setSelectedMail({ ...mail, message: cached.decryptedMessage, attachments: cached.attachments || [], isDecrypted: true })
-        setLoadingMail(false); return
-      }
-      if (hasValidCid(mail)) {
-        try {
-          const { fetchFromIPFS } = await import("@/utils/ipfs")
-          const parsed = await fetchFromIPFS(mail.cid)
-          const msg = parsed.message || ""
-          const encrypted = msg.includes("-----BEGIN PGP MESSAGE-----")
-          setSelectedMail({ ...mail, message: msg, isDecrypted: !encrypted, isEncrypted: encrypted, attachments: parsed.attachments || [] })
-          setLoadingMail(false); return
-        } catch (e) {
-          console.warn("Manual fetch fallback failed:", e)
+  const filteredMails = useMemo(() => {
+    return mails
+      .filter(m => {
+        if (activeTab === "Unread" && m.isRead) return false
+        if (activeLabelId && !getMailLabels(userEmail, m.id).includes(activeLabelId)) return false
+        if (searchQuery) {
+          const q = searchQuery.toLowerCase()
+          return (
+            m.subject?.toLowerCase().includes(q) ||
+            m.senderEmail?.toLowerCase().includes(q) ||
+            m.message?.toLowerCase().includes(q) ||
+            m.id?.toLowerCase().includes(q) ||
+            m.time?.toLowerCase().includes(q)
+          )
         }
-      }
-      const backup = mail.message || cached?.message || ""
-      setSelectedMail({ ...mail, message: backup, isDecrypted: !backup.includes("-----BEGIN PGP MESSAGE-----"), attachments: mail.attachments || [] })
-    } catch { } finally { setLoadingMail(false) }
-    thread.messages.forEach(m => { if (m.receiverEmail === userEmail) updateMailInStore(m.id, { isRead: true }) })
+        return true
+      })
+      .sort((a, b) => {
+        const getTime = (m: any) => m.time ? new Date(m.time).getTime() : 0
+        return getTime(b) - getTime(a)
+      })
+  }, [mails, activeTab, searchQuery, activeLabelId, userEmail])
+
+  const toggleSelection = (id: string, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation()
+    const newSelected = new Set(selectedIds)
+    if (newSelected.has(id)) newSelected.delete(id)
+    else newSelected.add(id)
+    setSelectedIds(newSelected)
   }
 
-  const restoreToInbox = (id: string) => { updateMailInStore(id, { status: "inbox" }); setSelectedMail(null) }
-  const deleteForever  = (id: string) => { updateMailInStore(id, { status: "purged", purgedAt: Date.now() }); setSelectedMail(null) }
+  const handleToggleSelectAll = () => {
+    if (selectedIds.size > 0 && selectedIds.size === filteredMails.length) {
+      setSelectedIds(new Set())
+    } else {
+      setSelectedIds(new Set(filteredMails.map(m => m.id)))
+    }
+  }
 
-  const decryptMail = async () => {
-    const user = JSON.parse(localStorage.getItem("user") || "{}")
-    if (!selectedMail?.message) { setPassError("No message content."); return }
-    const password = passInput || user.password
-    if (!password) { setPassError("Password not found. Please enter your password."); return }
+  const isAllSelected = filteredMails.length > 0 && selectedIds.size === filteredMails.length
 
+  const handleBulkTrash = () => {
+    selectedIds.forEach(id => {
+      updateMailInStore(id, { status: "trash" })
+    })
+    setSelectedIds(new Set())
+    setSelectedMail(null)
+  }
+
+  const handleBulkRestore = () => {
+    selectedIds.forEach(id => {
+      updateMailInStore(id, { status: "inbox" })
+    })
+    setSelectedIds(new Set())
+    setSelectedMail(null)
+  }
+
+  const openMail = (mail: any) => {
+    setSelectedMail(mail)
+    setDecryptedContent(null)
+    setDecryptError("")
+    setVaultPassword("")
+    setReplyMode(null)
+    if (!mail.isRead && mail.receiverEmail === userEmail) {
+      updateMailInStore(mail.id, { isRead: true })
+    }
+  }
+
+  const handleToggleStar = (id: string, e: React.MouseEvent) => {
+    e.stopPropagation()
+    const mail = mails.find(m => m.id === id)
+    if (mail) {
+      updateMailInStore(id, { isStarred: !mail.isStarred })
+    }
+  }
+
+  const handleDecrypt = async () => {
+    if (!vaultPassword || !currentSelectedMail) return
     setDecrypting(true)
-    setPassError("")
-
+    setDecryptError("")
     try {
-      const decrypted = await decryptMessage(selectedMail.message, user.privateKey, password)
-      const cleanedBody = decrypted.replace(/\[IPFS Attachment: [^\]]+\]/g, "").trim()
-      const updated = { ...selectedMail, message: cleanedBody, isDecrypted: true }
-      setSelectedMail(updated)
-      await updateCachedMail(selectedMail.id, {
-        decryptedMessage: cleanedBody,
-        isDecrypted: true,
-        message: selectedMail.message,
-        attachments: selectedMail.attachments,
-      })
-      setShowPassModal(false)
-      setPassInput("")
-    } catch (err: any) {
-      const errMsg = err?.message || ""
-      if (errMsg.includes("session key") || errMsg.includes("decrypt")) {
-        setPassError("This message was not encrypted for your keys.")
-      } else if (errMsg.includes("passphrase") || errMsg.includes("password")) {
-        setPassError("Incorrect password.")
+      const user = JSON.parse(localStorage.getItem("user") || "{}")
+      if (currentSelectedMail.message?.includes("-----BEGIN PGP MESSAGE-----")) {
+        const decrypted = await decryptMessage(currentSelectedMail.message, user.privateKey, vaultPassword)
+        setDecryptedContent(decrypted)
       } else {
-        setPassError(`Decryption failed: ${errMsg}`)
+        const { signData } = await import("@/utils/gun")
+        await signData("unlock", user.privateKey, vaultPassword)
+        setDecryptedContent(currentSelectedMail.message)
       }
+      setVaultPassword("")
+    } catch (err) {
+      setDecryptError("Incorrect Vault Passphrase")
     } finally {
       setDecrypting(false)
     }
   }
 
-  const toggleSelect = (e: React.MouseEvent, id: string) => {
-    e.stopPropagation()
-    setSelectedIds(prev => prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id])
-  }
+  const renderDetailView = () => {
+    const mail = currentSelectedMail
+    if (!mail) return null
 
-  // ── Inline Reader ──────────────────────────────────────────
-  const renderReader = () => (
-    <div style={{ flex: 1, overflowY: "auto", padding: "32px 40px", background: "var(--bg-panel)", animation: "fadeUp 0.3s ease both" }}>
-      <div style={{ marginBottom: "28px" }}>
-        <button
-          onClick={() => setSelectedMail(null)}
-          style={{ display: "flex", alignItems: "center", gap: "6px", background: "none", border: "none", cursor: "pointer", color: "var(--gold-mid)", fontSize: "13px", fontWeight: "800", letterSpacing: "1px", padding: "8px 0", transition: "opacity 0.2s" }}
-          onMouseOver={e => (e.currentTarget.style.opacity = "0.7")}
-          onMouseOut={e => (e.currentTarget.style.opacity = "1")}
-        >
-          <ChevronLeft size={16} /> ALL ARCHIVED MAIL
-        </button>
-      </div>
+    return (
+      <div style={{ flex: 1, display: "flex", flexDirection: "column", background: "var(--bg-body)", padding: "40px", borderLeft: "1px solid #141414", position: "relative" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "20px", marginBottom: "32px" }}>
+          <button 
+            onClick={() => { setSelectedMail(null); setReplyMode(null); }}
+            style={{ 
+              background: "var(--mail-row-border)", border: "1px solid #1F1F1F", borderRadius: "50%", 
+              width: "40px", height: "40px", display: "flex", alignItems: "center", justifyContent: "center",
+              cursor: "pointer", color: "var(--gold-mid)"
+            }}
+          >
+            <ArrowLeft size={18} /> 
+          </button>
+          <h1 style={{ fontSize: "24px", fontWeight: "700", color: "var(--text-bright)", margin: 0, fontFamily: "Inter, sans-serif", flex: 1 }}>
+            {mail.subject || "(No subject)"}
+          </h1>
+        </div>
 
-      <div style={{ maxWidth: "860px" }}>
-        <h1 style={{ fontSize: "26px", fontFamily: "Cinzel, serif", color: "var(--text-bright)", marginBottom: "24px", letterSpacing: "1px", lineHeight: 1.3 }}>
-          {selectedMail.subject || "(No subject)"}
-        </h1>
-
-        <div style={{ display: "flex", alignItems: "center", gap: "16px", marginBottom: "32px", paddingBottom: "24px", borderBottom: "1px solid var(--border-gold)" }}>
-          <div style={{ width: "48px", height: "48px", borderRadius: "50%", background: "linear-gradient(135deg, var(--gold-rich), var(--gold-light))", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: "900", fontSize: "20px", flexShrink: 0 }}>
-            {selectedMail.senderEmail?.[0]?.toUpperCase()}
+        <div style={{ display: "flex", alignItems: "center", marginBottom: "24px" }}>
+          <div style={{
+            width: "48px", height: "48px", borderRadius: "50%", background: "var(--bg-input)", 
+            display: "flex", alignItems: "center", justifyContent: "center",
+            fontSize: "16px", fontWeight: "800", color: "var(--gold-mid)", marginRight: "16px"
+          }}>
+            {(mail.senderName || mail.senderEmail || "U").charAt(0).toUpperCase()}
           </div>
           <div style={{ flex: 1 }}>
-            <div style={{ fontWeight: "700", color: "var(--text-bright)", fontSize: "15px", marginBottom: "4px" }}>{selectedMail.senderEmail}</div>
-            <div style={{ fontSize: "13px", color: "var(--text-muted)" }}>
-              To: <strong style={{ color: "var(--gold-mid)" }}>{selectedMail.receiverEmail}</strong>
-              <span style={{ margin: "0 8px" }}>•</span>{selectedMail.time}
+            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+              <span style={{ fontSize: "16px", fontWeight: "700", color: "var(--text-bright)" }}>{mail.senderName || mail.senderEmail}</span>
+              <span style={{ fontSize: "14px", color: "var(--text-dim)" }}>
+                {mail.time}
+              </span>
             </div>
-          </div>
-          <div style={{ display: "flex", gap: "4px" }}>
-            <button onClick={() => restoreToInbox(selectedMail.id)} style={{ display: "flex", alignItems: "center", gap: "6px", background: "rgba(76,175,110,0.1)", border: "1px solid rgba(76,175,110,0.3)", borderRadius: "8px", padding: "6px 14px", cursor: "pointer", color: "#4caf6e", fontSize: "12px", fontWeight: "700" }}>
-              <Inbox size={13} /> Restore
-            </button>
-            <button onClick={() => deleteForever(selectedMail.id)} style={{ display: "flex", alignItems: "center", gap: "6px", background: "rgba(232,66,52,0.08)", border: "1px solid rgba(232,66,52,0.25)", borderRadius: "8px", padding: "6px 14px", cursor: "pointer", color: "#e84234", fontSize: "12px", fontWeight: "700" }}>
-              <Trash2 size={13} /> Delete Forever
-            </button>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: "6px", marginTop: "4px" }}>
+              {userLabels.filter(l => getMailLabels(userEmail, mail.id).includes(l.id)).map(lbl => (
+                <span key={lbl.id} style={{
+                  fontSize: "10px", padding: "2px 8px", borderRadius: "4px",
+                  background: `${lbl.color}22`, color: lbl.color,
+                  border: `1px solid ${lbl.color}44`,
+                  display: "flex", alignItems: "center", gap: "4px"
+                }}>
+                  {lbl.emoji && <span>{lbl.emoji}</span>}
+                  {lbl.name}
+                </span>
+              ))}
+            </div>
+            <div style={{ fontSize: "14px", color: "var(--text-dim)", marginTop: "4px" }}>
+              {mail.senderEmail} <span style={{ margin: "0 4px" }}>→</span> {mail.receiverEmail}
+            </div>
           </div>
         </div>
 
-        <div style={{ minHeight: "300px" }}>
-          {selectedMail.isEncrypted && !selectedMail.isDecrypted ? (
-            <div style={{ padding: "48px 40px", background: "var(--bg-vault)", border: "1px solid var(--border-gold)", borderRadius: "16px", maxWidth: "600px" }}>
-              <div style={{ display: "flex", gap: "24px", alignItems: "flex-start" }}>
-                <Shield size={48} color="var(--gold-mid)" strokeWidth={1} />
-                <div>
-                  <h2 style={{ fontFamily: "Cinzel, serif", fontSize: "18px", color: "var(--text-bright)", marginBottom: "8px" }}>ENCRYPTED CONTENT</h2>
-                  <p style={{ color: "var(--text-muted)", fontSize: "14px", lineHeight: 1.7 }}>
-                    This message is end-to-end encrypted. Enter your DMail password to unlock.
-                  </p>
-                  <div style={{ marginTop: "20px", display: "flex", gap: "12px" }}>
-                    <div style={{
-                      display: "inline-flex", alignItems: "center", gap: "6px",
-                      background: "rgba(212,160,23,0.1)", padding: "8px 16px", borderRadius: "8px",
-                      border: "1px solid var(--border-gold)", color: "var(--gold-mid)", fontSize: "12px", fontWeight: "700"
-                    }}>
-                      <Lock size={12} /> ECC Curve25519
-                    </div>
-                    <button
-                      onClick={() => setShowPassModal(true)}
-                      className="btn"
-                      style={{ padding: "8px 24px", fontSize: "12px" }}
-                    >
-                      UNLOCK MESSAGE
-                    </button>
-                  </div>
+        <div style={{
+          background: "rgba(212, 175, 55, 0.05)", border: "1px solid rgba(212, 175, 55, 0.15)",
+          borderRadius: "8px", padding: "12px 20px", display: "flex", alignItems: "center", gap: "12px",
+          marginBottom: "32px"
+        }}>
+          <Lock size={14} color="var(--gold-mid)" />
+          <span style={{ fontSize: "12px", color: "var(--gold-mid)", fontFamily: "monospace", flex: 1 }}>
+            {mail.id?.slice(0, 16)}...
+          </span>
+          <span style={{ fontSize: "12px", color: "var(--gold-deep)", fontWeight: "600" }}>
+            {decryptedContent ? "Decrypted & Verified" : "Secured Archive"}
+          </span>
+        </div>
+
+        <div style={{ display: "flex", gap: "12px", marginBottom: "40px", position: "relative" }}>
+          <button 
+            onClick={() => { updateMailInStore(mail.id, { status: "inbox" }); setSelectedMail(null) }}
+            style={{ background: "var(--gold-mid)", color: "var(--bg-body)", border: "none", borderRadius: "8px", padding: "10px 24px", fontSize: "13px", fontWeight: "700", cursor: "pointer", display: "flex", alignItems: "center", gap: "8px" }}
+          >
+            <Inbox size={16} /> Restore to Inbox
+          </button>
+          
+          <div style={{ position: "relative" }}>
+            <button 
+              onClick={() => setShowLabelMenu(!showLabelMenu)} 
+              style={{ background: "var(--mail-row-border)", color: "var(--text-bright)", border: "1px solid #1F1F1F", borderRadius: "8px", padding: "10px 20px", fontSize: "13px", fontWeight: "600", cursor: "pointer", display: "flex", alignItems: "center", gap: "8px" }}
+            >
+              <Tag size={16} /> Label
+            </button>
+            
+            {showLabelMenu && (
+              <div style={{
+                position: "absolute", top: "100%", left: 0, marginTop: "12px",
+                background: "var(--bg-card)", border: "1px solid #1F1F1F",
+                borderRadius: "14px", padding: "10px", width: "240px", zIndex: 1000,
+                boxShadow: "0 20px 50px rgba(0,0,0,0.8), 0 0 0 1px rgba(212, 175, 55, 0.15)",
+                animation: "dropdownFadeIn 0.2s ease-out"
+              }}>
+                <style>{`
+                  @keyframes dropdownFadeIn {
+                    from { opacity: 0; transform: translateY(-10px); }
+                    to { opacity: 1; transform: translateY(0); }
+                  }
+                `}</style>
+                <div style={{ fontSize: "10px", color: "var(--text-dim)", padding: "8px 12px 12px", fontWeight: "800", textTransform: "uppercase", letterSpacing: "0.1em", borderBottom: "1px solid rgba(255,255,255,0.05)", marginBottom: "8px" }}>Assign Label</div>
+                <div style={{ maxHeight: "240px", overflowY: "auto", paddingRight: "4px" }}>
+                  {userLabels.map(lbl => {
+                    const isTagged = getMailLabels(userEmail, mail.id).includes(lbl.id)
+                    return (
+                      <button 
+                        key={lbl.id}
+                        onClick={() => {
+                          toggleMailLabel(userEmail, mail.id, lbl.id)
+                          setShowLabelMenu(false)
+                        }}
+                        style={{
+                          width: "100%", textAlign: "left", padding: "10px 12px", 
+                          background: isTagged ? "rgba(212, 175, 55, 0.12)" : "transparent",
+                          border: "none", borderRadius: "10px", cursor: "pointer",
+                          display: "flex", alignItems: "center", gap: "12px",
+                          transition: "all 0.2s ease",
+                          marginBottom: "2px"
+                        }}
+                        onMouseEnter={(e) => e.currentTarget.style.background = isTagged ? "rgba(212, 175, 55, 0.15)" : "rgba(255,255,255,0.03)"}
+                        onMouseLeave={(e) => e.currentTarget.style.background = isTagged ? "rgba(212, 175, 55, 0.12)" : "transparent"}
+                      >
+                        <div style={{ 
+                          width: "14px", height: "14px", borderRadius: "4px", 
+                          background: lbl.color, border: `1px solid ${lbl.color}60`,
+                          boxShadow: `0 0 10px ${lbl.color}30`
+                        }} />
+                        <span style={{ fontSize: "13px", fontWeight: isTagged ? "600" : "500", color: isTagged ? "var(--gold-mid)" : "var(--text-bright)", flex: 1 }}>{lbl.name}</span>
+                        {isTagged && <Check size={16} color="var(--gold-mid)" strokeWidth={3} />}
+                      </button>
+                    )
+                  })}
                 </div>
               </div>
+            )}
+          </div>
+
+          <button onClick={() => updateMailInStore(mail.id, { isStarred: !mail.isStarred })} style={{ background: "var(--mail-row-border)", color: "var(--text-bright)", border: "1px solid #1F1F1F", borderRadius: "8px", padding: "10px 20px", fontSize: "13px", fontWeight: "600", cursor: "pointer" }}><Star size={16} fill={mail.isStarred ? "var(--gold-mid)" : "none"} color={mail.isStarred ? "var(--gold-mid)" : "var(--text-bright)"} /></button>
+          <button onClick={() => { updateMailInStore(mail.id, { status: "trash" }); setSelectedMail(null); }} style={{ background: "var(--mail-row-border)", color: "var(--text-bright)", border: "1px solid #1F1F1F", borderRadius: "8px", padding: "10px 20px", fontSize: "13px", fontWeight: "600", cursor: "pointer" }}><Trash2 size={16} /></button>
+        </div>
+
+        <div style={{ flex: 1, overflowY: "auto", display: "flex", flexDirection: "column" }}>
+          {!decryptedContent ? (
+            <div style={{ background: "var(--bg-card)", border: "1px solid #1F1F1F", borderRadius: "16px", padding: "40px", textAlign: "center", maxWidth: "480px", margin: "0 auto" }}>
+              <div style={{ fontSize: "32px", marginBottom: "16px" }}>🔒</div>
+              <h3 style={{ color: "var(--text-bright)", marginBottom: "12px" }}>Secure Archive</h3>
+              <p style={{ color: "var(--text-dim)", fontSize: "14px", marginBottom: "24px" }}>Enter vault passphrase to unlock.</p>
+              <input type="password" placeholder="Vault Passphrase" value={vaultPassword} onChange={(e) => setVaultPassword(e.target.value)} style={{ width: "100%", background: "var(--mail-row-border)", border: "1px solid #1F1F1F", borderRadius: "8px", padding: "12px 16px", color: "var(--text-bright)", fontSize: "14px", outline: "none", textAlign: "center", marginBottom: "16px" }} onKeyDown={(e) => e.key === "Enter" && handleDecrypt()} />
+              {decryptError && <p style={{ color: "#E84234", fontSize: "12px", marginBottom: "16px" }}>{decryptError}</p>}
+              <button onClick={handleDecrypt} disabled={decrypting} style={{ width: "100%", background: "var(--gold-mid)", color: "var(--bg-body)", border: "none", borderRadius: "8px", padding: "12px", fontWeight: "700", cursor: "pointer", opacity: decrypting ? 0.6 : 1 }}>{decrypting ? "Decrypting..." : "Unlock Message"}</button>
             </div>
           ) : (
-            <div style={{ whiteSpace: "pre-wrap", lineHeight: "1.9", fontSize: "15px", color: "var(--text-bright)", fontFamily: "Inter, Raleway, sans-serif", maxWidth: "760px" }}>
-              {selectedMail.message}
-            </div>
+            <div style={{ color: "var(--text-bright)", fontSize: "15px", lineHeight: "1.6", whiteSpace: "pre-wrap", fontFamily: "Inter, sans-serif" }}>{decryptedContent || mail.message}</div>
           )}
         </div>
       </div>
-    </div>
-  )
+    )
+  }
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
-      {!selectedMail && (
-        <>
-          <PageHeader title="Archive" count={threads.length} searchQuery={searchQuery} onSearchChange={setSearchQuery} placeholder="Search archive..." />
-          <div className="folder-toolbar">
-            <button className="toolbar-btn" onClick={() => selectedIds.length === filteredThreads.length ? setSelectedIds([]) : setSelectedIds(filteredThreads.map(t => t.id))}>
-              {selectedIds.length === filteredThreads.length && filteredThreads.length > 0 ? <CheckSquare size={18} color="var(--gold-mid)" /> : <Square size={18} />}
-            </button>
-            <button className="toolbar-btn" onClick={() => { setIsRefreshing(true); setTimeout(() => setIsRefreshing(false), 1000) }}>
+    <div style={{ display: "flex", height: "100%", background: "var(--bg-body)", overflow: "hidden" }}>
+      <div style={{ 
+        width: selectedMail ? "360px" : "100%", display: "flex", flexDirection: "column", flexShrink: 0,
+        transition: "width 0.3s ease", maxWidth: selectedMail ? "360px" : "1200px", margin: selectedMail ? "0" : "0 auto"
+      }}>
+        <div style={{ padding: "24px 24px 12px" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "12px", marginBottom: "24px" }}>
+            <h2 style={{ fontSize: "24px", fontWeight: "700", color: "var(--text-bright)", margin: 0 }}>
+              {activeLabelId ? (userLabels.find(l => l.id === activeLabelId)?.name || "Archive") : "Archive"}
+            </h2>
+            {activeLabelId && (
+              <button onClick={() => { setActiveLabelId(null); router.push("/dashboard/archive"); }} style={{ background: "rgba(212, 175, 55, 0.1)", color: "var(--gold-mid)", border: "none", borderRadius: "4px", padding: "2px 8px", fontSize: "11px", fontWeight: "700", cursor: "pointer" }}>Clear Filter</button>
+            )}
+            <button 
+              onClick={() => { setIsRefreshing(true); setTimeout(() => setIsRefreshing(false), 800) }}
+              style={{ background: "none", border: "none", color: "var(--text-dim)", cursor: "pointer", marginLeft: "auto" }}
+            >
               <RefreshCw size={18} style={{ animation: isRefreshing ? "spin 1s linear infinite" : "none" }} />
             </button>
-            <button className="toolbar-btn"><MoreVertical size={18} /></button>
-            {selectedIds.length > 0 && (
-              <>
-                <div className="toolbar-divider" />
-                <span style={{ fontSize: "12px", fontWeight: "700", color: "var(--gold-mid)" }}>{selectedIds.length} selected</span>
-                <button className="toolbar-btn" title="Restore selected" onClick={() => { selectedIds.forEach(id => restoreToInbox(id)); setSelectedIds([]) }}>
-                  <Inbox size={18} />
-                </button>
-                <button className="toolbar-btn" title="Delete selected forever" onClick={() => { selectedIds.forEach(id => deleteForever(id)); setSelectedIds([]) }}>
-                  <Trash2 size={18} />
-                </button>
-              </>
-            )}
           </div>
-          <div style={{ margin: "8px 16px", padding: "8px 12px", background: "rgba(212,160,23,0.05)", border: "1px solid var(--border-gold)", borderRadius: "8px", fontSize: "11px", color: "var(--text-muted)" }}>
-            🗄️ Archived mails are kept here indefinitely — restore them to Inbox anytime.
+          
+          <div style={{ position: "relative", marginBottom: "16px" }}>
+            <Search size={16} color="var(--text-dim)" style={{ position: "absolute", left: "12px", top: "50%", transform: "translateY(-50%)" }} />
+            <input type="text" placeholder="Search archive..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} style={{ width: "100%", background: "var(--bg-card)", border: "1px solid #141414", borderRadius: "10px", padding: "10px 12px 10px 40px", color: "var(--text-bright)", fontSize: "13px", outline: "none" }} />
           </div>
-        </>
-      )}
 
-      <div style={{ flex: 1, overflow: "hidden", display: "flex", flexDirection: "column" }}>
-        {selectedMail ? (
-          <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", position: "relative" }}>
-            {loadingMail && <div style={{ position: "absolute", inset: 0, background: "var(--bg-card)", opacity: 0.85, display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100 }}><div style={{ color: "var(--gold-mid)", fontWeight: "700" }}>Loading...</div></div>}
-            {renderReader()}
-          </div>
-        ) : (
-          <div className="mail-list" style={{ flex: 1, overflowY: "auto" }}>
-            {filteredThreads.length === 0 ? (
-              <div style={{ padding: "100px 40px", textAlign: "center", color: "var(--text-muted)" }}>
-                <Archive size={48} style={{ opacity: 0.15, display: "block", margin: "0 auto 20px" }} />
-                <div style={{ fontSize: "18px", fontWeight: "600" }}>{searchQuery ? "No results found." : "No archived mail yet."}</div>
-                <div style={{ fontSize: "13px", opacity: 0.6, marginTop: "8px" }}>Archive mails from your inbox to keep them here.</div>
-              </div>
-            ) : (
-              filteredThreads.map((thread) => {
-                const mail = thread.lastMessage
-                const isSelected = selectedIds.includes(thread.id)
-                const senderRaw = mail.senderEmail?.split("@")[0] || "Unknown"
-                const senderName = senderRaw.charAt(0).toUpperCase() + senderRaw.slice(1)
-                const colors = ["#d4a017", "#c9871a", "#9a6b0e", "#b8750a", "#8a5a08"]
-                const avatarColor = colors[(senderName.charCodeAt(0) || 0) % colors.length]
-
-                return (
-                  <div
-                    key={thread.id}
-                    className={`mail-row ${isSelected ? "selected" : ""} ${!thread.isRead ? "unread" : ""}`}
-                    onClick={() => openMail(thread)}
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      padding: "0 8px 0 4px",
-                      minHeight: "52px",
-                      cursor: "pointer",
-                      borderBottom: "1px solid rgba(212,160,23,0.07)",
-                      background: isSelected ? "rgba(212,160,23,0.09)" : "transparent",
-                      transition: "background 0.15s",
-                      gap: 0,
-                      position: "relative",
-                    }}
-                  >
-                    {/* Avatar */}
-                    <div style={{
-                      flexShrink: 0, width: "36px", height: "36px", borderRadius: "50%",
-                      background: avatarColor, display: "flex", alignItems: "center",
-                      justifyContent: "center", fontWeight: "700", color: "#000",
-                      fontSize: "14px", marginLeft: "4px", marginRight: "10px",
-                    }}>
-                      {senderName.charAt(0)}
-                    </div>
-
-                    {/* Star & Checkbox */}
-                    <div onClick={(e) => e.stopPropagation()} style={{ flexShrink: 0, display: "flex", alignItems: "center", gap: "4px", width: "56px", marginRight: "8px" }}>
-                      <div
-                        className={`mail-row-checkbox ${isSelected ? "checked" : ""}`}
-                        onClick={(e) => toggleSelect(e, thread.id)}
-                        style={{ width: "16px", height: "16px", border: "1px solid var(--border-gold)", borderRadius: "3px" }}
-                      >
-                        {isSelected && <CheckSquare size={12} color="#000" />}
-                      </div>
-                      <button
-                        onClick={(e) => { e.stopPropagation(); updateMailInStore(mail.id, { isStarred: !thread.isStarred }) }}
-                        className="chromeless-btn"
-                        style={{ padding: "2px", opacity: thread.isStarred ? 1 : 0.35 }}
-                      >
-                        <Star size={15} fill={thread.isStarred ? "var(--gold-mid)" : "none"} color="var(--gold-mid)" />
-                      </button>
-                    </div>
-
-                    {/* Sender — fixed 160px */}
-                    <div className="mail-sender" style={{ width: "160px", flexShrink: 0, marginRight: "12px", border: "none", fontSize: "13px", fontWeight: !thread.isRead ? "700" : "500", color: !thread.isRead ? "var(--text-bright)" : "var(--text-muted)" }}>
-                      {senderName}
-                      {thread.count > 1 && (
-                        <span style={{
-                          fontSize: "10px", padding: "1px 5px", borderRadius: "10px",
-                          background: "rgba(212,160,23,0.1)", color: "var(--gold-mid)",
-                          fontWeight: "800", marginLeft: "6px", border: "1px solid rgba(212,160,23,0.2)"
-                        }}>
-                          {thread.count}
-                        </span>
-                      )}
-                    </div>
-
-                    {/* Subject + Snippet */}
-                    <div className="mail-content" style={{ flex: 1, border: "none", display: "flex", alignItems: "center", gap: "6px", overflow: "hidden" }}>
-                      <span className="mail-subject" style={{ fontSize: "13px", color: "var(--text-bright)", fontWeight: !thread.isRead ? "700" : "500", flexShrink: 0, maxWidth: "200px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                        {thread.subject || "(No subject)"}
-                      </span>
-                      <span style={{ color: "var(--text-muted)", opacity: 0.5, margin: "0 2px", fontSize: "12px" }}>—</span>
-                      <span className="mail-snippet" style={{ fontSize: "12px", color: "var(--text-dim)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                        🔒 {mail.isEncrypted ? "Encrypted" : "Archived Content"}
-                      </span>
-                    </div>
-
-                    {/* Date */}
-                    <div style={{ flexShrink: 0, fontSize: "12px", marginLeft: "12px", width: "62px", textAlign: "right", color: "var(--text-dim)" }}>
-                      {formatMailDate(mail.time)}
-                    </div>
-                  </div>
-                )
-              })
-            )}
-          </div>
-        )}
-      </div>
-      {showPassModal && (
-        <div className="modal-overlay">
-          <div className="modal-content" style={{ animation: "fadeUp 0.3s ease" }}>
-            <h3 style={{ fontFamily: "Cinzel, serif", color: "var(--gold-mid)", marginBottom: "16px" }}>Verify Identity</h3>
-            <p style={{ fontSize: "13px", color: "var(--text-muted)", marginBottom: "20px" }}>
-              Enter your DMail account password to securely decrypt this message.
-            </p>
-            <input
-              type="password"
-              className="auth-input"
-              value={passInput}
-              onChange={(e) => setPassInput(e.target.value)}
-              placeholder="Your password"
-              autoFocus
-              onKeyDown={(e) => e.key === "Enter" && decryptMail()}
-              style={{ marginBottom: "10px" }}
-            />
-            {passError && <p style={{ color: "#e84234", fontSize: "12px", marginBottom: "20px", fontWeight: "600" }}>{passError}</p>}
-            <div className="modal-actions" style={{ display: "flex", justifyContent: "flex-end", gap: "10px" }}>
-              <button onClick={() => setShowPassModal(false)} className="chromeless-btn" style={{ padding: "10px 20px" }}>CANCEL</button>
-              <button className="btn" onClick={decryptMail} disabled={decrypting}>
-                {decrypting ? "UNLOCKING..." : "UNLOCK"}
-              </button>
-            </div>
+          <div style={{ display: "flex", gap: "4px", background: "var(--bg-card)", padding: "4px", borderRadius: "10px", width: "fit-content" }}>
+            {(["All", "Unread"] as Tab[]).map(tab => (
+              <button key={tab} onClick={() => setActiveTab(tab)} style={{ padding: "6px 20px", borderRadius: "8px", fontSize: "12px", fontWeight: "700", cursor: "pointer", background: activeTab === tab ? "var(--gold-mid)" : "transparent", color: activeTab === tab ? "var(--bg-body)" : "var(--text-dim)", border: "none" }}>{tab}</button>
+            ))}
           </div>
         </div>
-      )}
+
+        <div style={{ 
+          display: "flex", alignItems: "center", gap: "16px",
+          padding: "12px 24px", borderBottom: "1px solid #141414",
+          background: "rgba(255,255,255,0.02)"
+        }}>
+          <button 
+            onClick={handleToggleSelectAll}
+            style={{ 
+              display: "flex", alignItems: "center", gap: "10px", 
+              background: "none", border: "none", color: isAllSelected ? "var(--gold-mid)" : "var(--text-dim)",
+              fontSize: "13px", fontWeight: "600", cursor: "pointer", padding: "4px 8px",
+              borderRadius: "6px", transition: "all 0.2s"
+            }}
+          >
+            <div style={{ 
+              width: "18px", height: "18px", borderRadius: "4px", 
+              border: `2px solid ${isAllSelected ? "var(--gold-mid)" : "var(--text-dim)"}`,
+              background: isAllSelected ? "var(--gold-mid)" : "transparent",
+              display: "flex", alignItems: "center", justifyContent: "center"
+            }}>
+              {isAllSelected && <Check size={12} color="var(--bg-body)" strokeWidth={4} />}
+            </div>
+            <span>Select All</span>
+          </button>
+
+          {selectedIds.size > 0 && (
+            <div style={{ display: "flex", alignItems: "center", gap: "12px", marginLeft: "auto" }}>
+              <span style={{ fontSize: "12px", color: "var(--gold-mid)", fontWeight: "600" }}>{selectedIds.size} selected</span>
+              <button onClick={handleBulkRestore} style={{ background: "rgba(212, 175, 55, 0.1)", color: "var(--gold-mid)", border: "none", borderRadius: "8px", padding: "6px 12px", fontSize: "12px", fontWeight: "700", cursor: "pointer", display: "flex", alignItems: "center", gap: "6px" }}>
+                <Inbox size={14} /> Restore
+              </button>
+              <button onClick={handleBulkTrash} style={{ background: "rgba(232, 66, 52, 0.1)", color: "#e84234", border: "none", borderRadius: "8px", padding: "6px 12px", fontSize: "12px", fontWeight: "700", cursor: "pointer", display: "flex", alignItems: "center", gap: "6px" }}>
+                <Trash2 size={14} /> Delete
+              </button>
+            </div>
+          )}
+        </div>
+
+        <div style={{ flex: 1, overflowY: "auto" }}>
+          {filteredMails.length === 0 ? (
+            <div style={{ padding: "60px 24px", textAlign: "center", color: "var(--text-dim)" }}>No archived messages</div>
+          ) : (
+            filteredMails.map(mail => (
+              <MailRow 
+                key={mail.id}
+                mail={mail}
+                isSelected={selectedMail?.id === mail.id}
+                onOpen={openMail}
+                onToggleSelection={toggleSelection}
+                isSelectedInBulk={selectedIds.has(mail.id)}
+                onToggleStar={handleToggleStar}
+                activeLabels={userLabels.filter(l => getMailLabels(userEmail, mail.id).includes(l.id))}
+              />
+            ))
+          )}
+        </div>
+      </div>
+      {renderDetailView()}
     </div>
   )
 }

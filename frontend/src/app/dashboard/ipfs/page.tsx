@@ -5,6 +5,7 @@ import { checkPinStatus, exportMailFromIPFS, getLocalNode } from "@/utils/ipfs"
 import { getMails, subscribe } from "@/utils/mailStore"
 import { copyToClipboard } from "@/utils/clipboard"
 import PageHeader from "@/components/PageHeader"
+import { Server, HardDrive, Pin, Database, History, UploadCloud } from "lucide-react"
 
 type Tab = "overview" | "cids" | "backup"
 
@@ -39,18 +40,28 @@ export default function IPFSExplorerPage() {
   const [pinningAll, setPinningAll]     = useState(false)
   const [pinnedAllMsg, setPinnedAllMsg] = useState("")
 
-  // ── Load mails from store ──────────────────────────────────────
+  // ── Load mails from store with throttled updates ────────────────────────
   useEffect(() => {
     if (typeof window === "undefined") return
 
-    const getIPFSMails = () =>
-      getMails("all").filter((m: any) => m.cid &&
-        (m.cid.startsWith("Qm") || m.cid.startsWith("bafy"))
-      )
+    let throttleTimer: NodeJS.Timeout | null = null
+    const refresh = () => {
+      if (throttleTimer) return
+      throttleTimer = setTimeout(() => {
+        const ipfsMails = getMails("all").filter((m: any) => 
+          m.cid && (m.cid.startsWith("Qm") || m.cid.startsWith("bafy"))
+        )
+        setMails(ipfsMails)
+        throttleTimer = null
+      }, 800) // Update IPFS list at most once every 800ms
+    }
 
-    setMails(getIPFSMails())
-    const unsub = subscribe(() => setMails(getIPFSMails()))
-    return () => { unsub() }
+    refresh()
+    const unsub = subscribe(refresh)
+    return () => { 
+      unsub()
+      if (throttleTimer) clearTimeout(throttleTimer)
+    }
   }, [])
 
   // ── Fetch IPFS node stats ──────────────────────────────────────
@@ -203,17 +214,7 @@ export default function IPFSExplorerPage() {
     borderRadius: "14px", padding: "20px", ...extra,
   })
 
-  const tabBtn = (t: Tab) => ({
-    padding: "8px 18px", borderRadius: "20px", cursor: "pointer",
-    fontFamily: "Raleway, sans-serif", fontSize: "12px", fontWeight: "700" as const,
-    border: "1px solid",
-    borderColor: activeTab === t ? "var(--gold-mid)" : "var(--border-gold)",
-    background: activeTab === t
-      ? "linear-gradient(135deg, var(--gold-rich), var(--gold-light))"
-      : "none",
-    color: activeTab === t ? "#000" : "var(--text-muted)",
-    transition: "all 0.2s ease",
-  })
+
 
   const statRow = (label: string, value: string, color?: string) => (
     <div style={{
@@ -232,7 +233,7 @@ export default function IPFSExplorerPage() {
     ? JSON.parse(localStorage.getItem(`backups_${user.email}`) || "[]") : []
 
   return (
-    <>
+    <div style={{ height: "100%", overflowY: "auto", paddingRight: "8px", scrollbarWidth: "thin", scrollbarColor: "var(--gold-mid) transparent" }}>
       <PageHeader 
         title="IPFS Explorer"
         count={mails.length}
@@ -248,12 +249,12 @@ export default function IPFSExplorerPage() {
             borderColor: nodeStats.status === "online"
               ? "rgba(76,175,110,0.4)"
               : nodeStats.status === "checking"
-              ? "rgba(212,160,23,0.4)"
+              ? "rgba(212, 175, 55,0.4)"
               : "rgba(217,48,37,0.4)",
             background: nodeStats.status === "online"
               ? "rgba(76,175,110,0.08)"
               : nodeStats.status === "checking"
-              ? "rgba(212,160,23,0.08)"
+              ? "rgba(212, 175, 55,0.08)"
               : "rgba(217,48,37,0.08)",
             color: nodeStats.status === "online" ? "#4caf6e"
               : nodeStats.status === "checking" ? "var(--gold-mid)"
@@ -274,15 +275,21 @@ export default function IPFSExplorerPage() {
       />
 
       {/* ── Tabs ── */}
-      <div style={{ display: "flex", gap: "8px", marginBottom: "20px" }}>
-        <button style={tabBtn("overview")} onClick={() => setActiveTab("overview")}>🖥️ Overview</button>
-        <button style={tabBtn("cids")}     onClick={() => setActiveTab("cids")}>🗂️ CID List</button>
-        <button style={tabBtn("backup")}   onClick={() => setActiveTab("backup")}>☁️ Backup</button>
+      <div className="folder-tabs-container" style={{ marginTop: "24px", marginBottom: "24px" }}>
+        <div className={`folder-tab-item ${activeTab === "overview" ? "active" : ""}`} onClick={() => setActiveTab("overview")}>
+          Overview
+        </div>
+        <div className={`folder-tab-item ${activeTab === "cids" ? "active" : ""}`} onClick={() => setActiveTab("cids")}>
+          CID List
+        </div>
+        <div className={`folder-tab-item ${activeTab === "backup" ? "active" : ""}`} onClick={() => setActiveTab("backup")}>
+          Backup
+        </div>
       </div>
 
       {/* ══ OVERVIEW TAB ══════════════════════════════════════════ */}
       {activeTab === "overview" && (
-        <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: "16px", paddingBottom: "40px" }}>
 
           {/* Node status card */}
           <div style={card()}>
@@ -291,8 +298,8 @@ export default function IPFSExplorerPage() {
               justifyContent: "space-between", marginBottom: "16px",
             }}>
               <div>
-                <div style={{ fontSize: "15px", fontWeight: "700", color: "var(--text-bright)", marginBottom: "4px" }}>
-                  🖥️ IPFS Node Status
+                <div style={{ fontSize: "15px", fontWeight: "700", color: "var(--text-bright)", marginBottom: "4px", display: "flex", alignItems: "center", gap: "8px" }}>
+                  <Server size={16} color="var(--gold-mid)" /> IPFS Node Status
                 </div>
                 <div style={{ fontSize: "12px", color: "var(--text-muted)" }}>
                   Kubo daemon (Local Node)
@@ -307,15 +314,15 @@ export default function IPFSExplorerPage() {
                   fontFamily: "Raleway, sans-serif",
                 }}
               >
-                🔄 Refresh
+                Refresh
               </button>
             </div>
 
             <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
               {statRow("Status",
-                nodeStats.status === "online" ? "✅ Online"
-                  : nodeStats.status === "checking" ? "⏳ Checking..."
-                  : "❌ Offline",
+                nodeStats.status === "online" ? "Online"
+                  : nodeStats.status === "checking" ? "Checking..."
+                  : "Offline",
                 nodeStats.status === "online" ? "#4caf6e"
                   : nodeStats.status === "checking" ? "var(--gold-mid)"
                   : "#e84234"
@@ -332,8 +339,8 @@ export default function IPFSExplorerPage() {
 
           {/* Storage stats card */}
           <div style={card()}>
-            <div style={{ fontSize: "15px", fontWeight: "700", color: "var(--text-bright)", marginBottom: "16px" }}>
-              💾 Storage Used
+            <div style={{ fontSize: "15px", fontWeight: "700", color: "var(--text-bright)", marginBottom: "16px", display: "flex", alignItems: "center", gap: "8px" }}>
+              <HardDrive size={16} color="var(--gold-mid)" /> Storage Used
             </div>
 
             <div style={{ display: "flex", flexDirection: "column", gap: "8px", marginBottom: "16px" }}>
@@ -354,7 +361,7 @@ export default function IPFSExplorerPage() {
               </div>
               <div style={{
                 height: "6px", borderRadius: "3px",
-                background: "rgba(212,160,23,0.1)",
+                background: "rgba(212, 175, 55,0.1)",
                 border: "1px solid var(--border-gold)",
                 overflow: "hidden",
               }}>
@@ -375,8 +382,8 @@ export default function IPFSExplorerPage() {
               justifyContent: "space-between", marginBottom: "16px",
             }}>
               <div>
-                <div style={{ fontSize: "15px", fontWeight: "700", color: "var(--text-bright)", marginBottom: "4px" }}>
-                  📌 Pinned Files
+                <div style={{ fontSize: "15px", fontWeight: "700", color: "var(--text-bright)", marginBottom: "4px", display: "flex", alignItems: "center", gap: "8px" }}>
+                  <Pin size={16} color="var(--gold-mid)" /> Pinned Files
                 </div>
                 <div style={{ fontSize: "12px", color: "var(--text-muted)" }}>
                   {mails.length} mail{mails.length !== 1 ? "s" : ""} stored on IPFS Cluster
@@ -393,7 +400,7 @@ export default function IPFSExplorerPage() {
                   opacity: pinningAll ? 0.6 : 1,
                 }}
               >
-                {pinningAll ? "⏳ Pinning..." : "📌 Pin All"}
+                {pinningAll ? "Pinning..." : "Pin All"}
               </button>
             </div>
 
@@ -417,7 +424,6 @@ export default function IPFSExplorerPage() {
                     padding: "8px 12px", background: "var(--bg-panel)",
                     borderRadius: "8px", border: "1px solid var(--border-gold)",
                   }}>
-                    <span style={{ fontSize: "13px" }}>📧</span>
                     <span style={{
                       flex: 1, fontSize: "12px", color: "var(--text-bright)",
                       overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
@@ -452,7 +458,7 @@ export default function IPFSExplorerPage() {
             borderRadius: "10px", padding: "12px 16px",
             fontSize: "12px", color: "var(--text-muted)", lineHeight: "1.7",
           }}>
-            🔒 All mails are <strong style={{ color: "var(--text-bright)" }}>PGP encrypted</strong> before
+            Lock All mails are <strong style={{ color: "var(--text-bright)" }}>PGP encrypted</strong> before
             upload. Content is retrievable by CID but{" "}
             <strong style={{ color: "var(--text-bright)" }}>unreadable</strong> without your private key.
           </div>
@@ -461,9 +467,7 @@ export default function IPFSExplorerPage() {
 
       {/* ══ CID LIST TAB ══════════════════════════════════════════ */}
       {activeTab === "cids" && (
-        <>
-          {/* Search removed here as it's now in PageHeader */}
-
+        <div style={{ paddingBottom: "40px" }}>
           {filteredMails.length === 0 ? (
             <p className="empty-state">
               {searchCid ? "No results found." : "No IPFS stored mails yet."}
@@ -494,7 +498,7 @@ export default function IPFSExplorerPage() {
                         background: "rgba(76,175,110,0.1)", color: "#4caf6e",
                         border: "1px solid rgba(76,175,110,0.2)",
                         whiteSpace: "nowrap", marginLeft: "12px",
-                      }}>✅ On IPFS</span>
+                      }}>On IPFS</span>
                     </div>
 
                     {/* CID */}
@@ -513,7 +517,7 @@ export default function IPFSExplorerPage() {
                         background: "none", border: "none", cursor: "pointer",
                         color: "var(--gold-mid)", fontSize: "13px", flexShrink: 0,
                       }}>
-                        {copiedCid === mail.cid ? "✅" : "📋"}
+                        {copiedCid === mail.cid ? "Check" : "Copy"}
                       </button>
                     </div>
 
@@ -526,7 +530,7 @@ export default function IPFSExplorerPage() {
                           color: "#4caf6e", fontSize: "12px", fontFamily: "Raleway, sans-serif",
                           opacity: pinStatus === "checking" ? 0.6 : 1,
                         }}>
-                        {pinStatus === "checking" ? "⏳ Checking..." : "📌 Check Pin"}
+                        {pinStatus === "checking" ? "Checking..." : "Check Pin"}
                       </button>
 
                       <button onClick={() => handleExport(mail)} disabled={isExporting} style={{
@@ -535,7 +539,7 @@ export default function IPFSExplorerPage() {
                         color: "#4caf6e", fontSize: "12px", fontFamily: "Raleway, sans-serif",
                         opacity: isExporting ? 0.6 : 1,
                       }}>
-                        {isExporting ? "⏳ Exporting..." : "⬇️ Export"}
+                        {isExporting ? "Exporting..." : "Export"}
                       </button>
 
                       <a href={`${getLocalNode(8080)}/ipfs/${mail.cid}`}
@@ -544,7 +548,7 @@ export default function IPFSExplorerPage() {
                           background: "none", color: "#4caf6e",
                           border: "1px solid rgba(76,175,110,0.4)", textDecoration: "none",
                           fontFamily: "Raleway, sans-serif",
-                        }}>💻 Local ↗</a>
+                        }}>Local ↗</a>
 
                       <a href={`https://ipfs.io/ipfs/${mail.cid}`}
                         target="_blank" rel="noopener noreferrer" style={{
@@ -552,7 +556,7 @@ export default function IPFSExplorerPage() {
                           background: "none", color: "#4caf6e",
                           border: "1px solid rgba(76,175,110,0.4)", textDecoration: "none",
                           fontFamily: "Raleway, sans-serif",
-                        }}>🌍 IPFS.io ↗</a>
+                        }}>IPFS.io ↗</a>
 
                       {pinStatus && pinStatus !== "checking" && (
                         <span style={{
@@ -560,7 +564,7 @@ export default function IPFSExplorerPage() {
                           background: pinStatus === "pinned"
                             ? "rgba(76,175,110,0.1)"
                             : pinStatus === "not-pinned"
-                            ? "rgba(212,160,23,0.1)"
+                            ? "rgba(212, 175, 55,0.1)"
                             : "rgba(217,48,37,0.1)",
                           color: pinStatus === "pinned" ? "#4caf6e"
                             : pinStatus === "not-pinned" ? "var(--gold-mid)"
@@ -568,12 +572,12 @@ export default function IPFSExplorerPage() {
                           border: `1px solid ${pinStatus === "pinned"
                             ? "rgba(76,175,110,0.3)"
                             : pinStatus === "not-pinned"
-                            ? "rgba(212,160,23,0.3)"
+                            ? "rgba(212, 175, 55,0.3)"
                             : "rgba(217,48,37,0.3)"}`,
                         }}>
-                          {pinStatus === "pinned"     && "✅ Pinned"}
-                          {pinStatus === "not-pinned" && "⚠️ Not pinned"}
-                          {pinStatus === "offline"    && "❌ Offline"}
+                          {pinStatus === "pinned"     && "Pinned"}
+                          {pinStatus === "not-pinned" && "Not pinned"}
+                          {pinStatus === "offline"    && "Offline"}
                         </span>
                       )}
                     </div>
@@ -582,18 +586,18 @@ export default function IPFSExplorerPage() {
               })}
             </div>
           )}
-        </>
+        </div>
       )}
 
       {/* ══ BACKUP TAB ════════════════════════════════════════════ */}
       {activeTab === "backup" && (
-        <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: "16px", paddingBottom: "40px" }}>
 
           {/* Backup mailbox card */}
           <div style={card()}>
             <div style={{ marginBottom: "16px" }}>
-              <div style={{ fontSize: "15px", fontWeight: "700", color: "var(--text-bright)", marginBottom: "4px" }}>
-                ☁️ Backup Mailbox to IPFS
+              <div style={{ fontSize: "15px", fontWeight: "700", color: "var(--text-bright)", marginBottom: "4px", display: "flex", alignItems: "center", gap: "8px" }}>
+                <Database size={16} color="var(--gold-mid)" /> Backup Mailbox to IPFS
               </div>
               <div style={{ fontSize: "12px", color: "var(--text-muted)", lineHeight: "1.6" }}>
                 Creates an encrypted JSON index of all your mails and uploads it to your IPFS node.
@@ -631,12 +635,12 @@ export default function IPFSExplorerPage() {
                   ? "rgba(76,175,110,0.08)"
                   : backupStatus.state === "error"
                   ? "rgba(217,48,37,0.08)"
-                  : "rgba(212,160,23,0.08)",
+                  : "rgba(212, 175, 55,0.08)",
                 border: `1px solid ${backupStatus.state === "success"
                   ? "rgba(76,175,110,0.3)"
                   : backupStatus.state === "error"
                   ? "rgba(217,48,37,0.3)"
-                  : "rgba(212,160,23,0.3)"}`,
+                  : "rgba(212, 175, 55,0.3)"}`,
                 color: backupStatus.state === "success" ? "#4caf6e"
                   : backupStatus.state === "error" ? "#e84234"
                   : "var(--gold-mid)",
@@ -644,7 +648,7 @@ export default function IPFSExplorerPage() {
                 {backupStatus.state === "backing-up" && (
                   <span style={{
                     display: "inline-block", width: "11px", height: "11px",
-                    border: "2px solid rgba(212,160,23,0.3)",
+                    border: "2px solid rgba(212, 175, 55,0.3)",
                     borderTop: "2px solid var(--gold-mid)",
                     borderRadius: "50%", animation: "spin 0.8s linear infinite",
                     marginRight: "8px", verticalAlign: "middle",
@@ -671,7 +675,7 @@ export default function IPFSExplorerPage() {
                         background: "none", border: "none", cursor: "pointer",
                         color: "var(--gold-mid)", fontSize: "12px",
                       }}>
-                        {copiedCid === backupStatus.cid ? "✅" : "📋"}
+                        {copiedCid === backupStatus.cid ? "Check" : "Copy"}
                       </button>
                     </div>
                   </div>
@@ -685,21 +689,21 @@ export default function IPFSExplorerPage() {
               style={{
                 padding: "11px 24px", borderRadius: "10px", cursor: "pointer",
                 background: "linear-gradient(135deg, var(--gold-rich), var(--gold-light))",
-                border: "none", color: "#000", fontSize: "13px",
+                border: "none", color: "var(--bg-body)", fontSize: "13px",
                 fontFamily: "Raleway, sans-serif", fontWeight: "700",
-                boxShadow: "0 2px 12px rgba(212,160,23,0.3)",
+                boxShadow: "0 2px 12px rgba(212, 175, 55,0.3)",
                 opacity: backupStatus.state === "backing-up" ? 0.7 : 1,
               }}
             >
-              {backupStatus.state === "backing-up" ? "⏳ Backing up..." : "☁️ Backup Now"}
+              {backupStatus.state === "backing-up" ? "Backing up..." : "Backup Now"}
             </button>
           </div>
 
           {/* Backup history */}
           {backupHistory.length > 0 && (
             <div style={card()}>
-              <div style={{ fontSize: "15px", fontWeight: "700", color: "var(--text-bright)", marginBottom: "14px" }}>
-                🕓 Backup History
+              <div style={{ fontSize: "15px", fontWeight: "700", color: "var(--text-bright)", marginBottom: "14px", display: "flex", alignItems: "center", gap: "8px" }}>
+                <History size={16} color="var(--gold-mid)" /> Backup History
               </div>
               <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
                 {backupHistory.map((b: any, i: number) => (
@@ -708,7 +712,6 @@ export default function IPFSExplorerPage() {
                     padding: "10px 14px", background: "var(--bg-panel)",
                     borderRadius: "8px", border: "1px solid var(--border-gold)",
                   }}>
-                    <span style={{ fontSize: "13px" }}>☁️</span>
                     <div style={{ flex: 1, overflow: "hidden" }}>
                       <div style={{ fontSize: "11px", color: "var(--text-bright)", fontWeight: "600" }}>
                         {b.count} mails · {b.date}
@@ -723,7 +726,7 @@ export default function IPFSExplorerPage() {
                       background: "none", border: "none", cursor: "pointer",
                       color: "var(--gold-mid)", fontSize: "12px", flexShrink: 0,
                     }}>
-                      {copiedCid === b.cid ? "✅" : "📋"}
+                      {copiedCid === b.cid ? "Check" : "Copy"}
                     </button>
                   </div>
                 ))}
@@ -734,8 +737,8 @@ export default function IPFSExplorerPage() {
           {/* Restore */}
           <div style={card()}>
             <div style={{ marginBottom: "16px" }}>
-              <div style={{ fontSize: "15px", fontWeight: "700", color: "var(--text-bright)", marginBottom: "4px" }}>
-                🔁 Restore from CID
+              <div style={{ fontSize: "15px", fontWeight: "700", color: "var(--text-bright)", marginBottom: "4px", display: "flex", alignItems: "center", gap: "8px" }}>
+                <UploadCloud size={16} color="var(--gold-mid)" /> Restore from CID
               </div>
               <div style={{ fontSize: "12px", color: "var(--text-muted)" }}>
                 Paste a backup CID to restore your mail index from IPFS.
@@ -759,9 +762,9 @@ export default function IPFSExplorerPage() {
                   try {
                     const { fetchFromIPFS } = await import("@/utils/ipfs")
                     const data = await fetchFromIPFS(restoreCid.trim())
-                    alert(`✅ Backup found: ${data.mailCount} mails from ${data.email} (${data.createdAt?.split("T")[0]})`)
+                    alert(`Backup found: ${data.mailCount} mails from ${data.email} (${data.createdAt?.split("T")[0]})`)
                   } catch (e) {
-                    alert("❌ Could not fetch backup from global or local IPFS — check the CID and your connection.")
+                    alert("Could not fetch backup from global or local IPFS — check the CID and your connection.")
                   }
                 }}
                 disabled={!restoreCid.trim()}
@@ -773,12 +776,12 @@ export default function IPFSExplorerPage() {
                   opacity: restoreCid.trim() ? 1 : 0.5,
                 }}
               >
-                🔁 Restore
+                Restore
               </button>
             </div>
           </div>
         </div>
       )}
-    </>
+    </div>
   )
 }

@@ -72,12 +72,40 @@ export const uploadFileToPinata = async (blob: Blob, filename: string): Promise<
 export const isPinataConfigured = async (): Promise<boolean> => {
   try {
     const relayBase = getLocalNode(8765)
-    const res = await fetch(`${relayBase}/pin/status`, { signal: AbortSignal.timeout(2000) })
+    const res = await fetch(`${relayBase}/pin/status`, { signal: AbortSignal.timeout(1000) })
     if (!res.ok) return false
     const data = await res.json()
     return data.pinataReady === true
   } catch {
     return false
+  }
+}
+
+export const uploadVault = async (encryptedData: string): Promise<string> => {
+  // Vaults are just encrypted strings. We wrap them in a simple object for IPFS.
+  const dataObj = { vault: encryptedData, type: "identity_vault", version: "2.0" }
+  
+  // Try relay proxy first (globally reachable)
+  try {
+    if (await isPinataConfigured()) {
+       return await uploadToPinata(dataObj)
+    }
+  } catch (proxyErr) {
+    console.warn("⚠️ Relay /pin failed for vault, using local Kubo fallback", proxyErr)
+  }
+
+  // Fallback: local Kubo
+  return await uploadToIPFS(dataObj)
+}
+
+export const fetchVault = async (cid: string): Promise<string> => {
+  try {
+    const data = await fetchFromIPFS(cid)
+    if (typeof data === "object" && data.vault) return data.vault
+    return typeof data === "string" ? data : JSON.stringify(data)
+  } catch (err) {
+    console.error("❌ Failed to fetch vault from IPFS:", err)
+    return ""
   }
 }
 
@@ -135,16 +163,18 @@ export const stripPGP = (text: string): string => {
     .trim()
 }
 
-const MASTER_IP = "130.1.6.173";
+const MASTER_IP = "192.168.0.130";
 
 export const getLocalNode = (port: number) => {
   if (typeof window !== "undefined") {
-    // If we are browsing via IP, use that IP. Otherwise, use the Master IP.
-    const host = window.location.hostname === "localhost" ? MASTER_IP : window.location.hostname;
+    // Default to localhost (127.0.0.1) for local development
+    const host = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1" 
+      ? "127.0.0.1" 
+      : window.location.hostname;
     const protocol = window.location.protocol === "https:" ? "https:" : "http:";
     return `${protocol}//${host}:${port}`;
   }
-  return `http://${MASTER_IP}:${port}`;
+  return `http://127.0.0.1:${port}`;
 }
 
 export const uploadToIPFS = async (data: object): Promise<string> => {
@@ -156,16 +186,19 @@ export const uploadToIPFS = async (data: object): Promise<string> => {
 
     let addResponse;
     try {
-      addResponse = await fetch(`${getLocalNode(5001)}/api/v0/add?pin=false`, {
+      const target = getLocalNode(5001)
+      addResponse = await fetch(`${target}/api/v0/add?pin=false`, {
         method: "POST",
         body: formData,
       })
     } catch (err) {
-      console.warn("⚠️ IPFS dynamic fetch failed, retrying with localhost...", err)
-      addResponse = await fetch(`http://localhost:5001/api/v0/add?pin=false`, {
-        method: "POST",
-        body: formData,
-      }).catch(e => { throw new Error(`Kubo connection failed: ${e.message}`) })
+      console.warn("⚠️ Local Kubo API unreachable (CORS or Node down). Falling back to Relay...", err)
+      // If local Kubo fails, we MUST fallback to the relay server (Pinata) to ensure the mail is sent!
+      try {
+        return await uploadToPinata(data)
+      } catch (pinataErr) {
+        throw new Error(`IPFS Upload Failed: Local node unreachable and Relay pinning failed. Check your IPFS CORS settings.`)
+      }
     }
 
     if (!addResponse.ok) {
@@ -196,6 +229,16 @@ export const uploadToIPFS = async (data: object): Promise<string> => {
       }
     } catch {
       console.warn("⚠️ Cluster offline — file pinned locally only")
+    }
+
+    // 🌍 [Global Mirror] Mirror to Pinata if available to ensure cross-device sync
+    try {
+      if (await isPinataConfigured()) {
+        await uploadToPinata(data)
+        console.log("🌍 [Global] Mirroring successful to Pinata:", cid)
+      }
+    } catch (e) {
+      console.warn("⚠️ Mirroring to Pinata failed (non-critical):", e)
     }
 
     return cid
@@ -246,6 +289,16 @@ export const uploadFileToIPFS = async (blob: Blob, filename: string): Promise<st
       console.warn("⚠️ Cluster offline — file pinned locally only")
     }
 
+    // 🌍 [Global Mirror] Mirror to Pinata if available to ensure cross-device sync
+    try {
+      if (await isPinataConfigured()) {
+        await uploadFileToPinata(blob, filename)
+        console.log("🌍 [Global] File mirror successful to Pinata:", cid)
+      }
+    } catch (e) {
+      console.warn("⚠️ File mirroring to Pinata failed (non-critical):", e)
+    }
+
     return cid
 
   } catch (err) {
@@ -258,21 +311,13 @@ export const fetchFromIPFS = async (cid: string): Promise<any> => {
   if (!cid || cid.length < 10) throw new Error("Invalid CID")
 
   const gateways = [
-    // 🌍 PINATA FIRST — content pinned here is globally available immediately
-    { name: "Pinata",       url: (c: string) => `https://gateway.pinata.cloud/ipfs/${c}`, timeout: 8000 },
-    
-    // 🔗 LOCAL RELAY (fast if user is on same network)
-    { name: "Local Kubo",   url: (c: string) => `${getLocalNode(5001)}/api/v0/cat?arg=${c}`, method: "POST", timeout: 5000 },
-    
-    // 🌍 HIGH-AVAILABILITY PUBLIC GATEWAYS
-    { name: "Cloudflare",   url: (c: string) => `https://cloudflare-ipfs.com/ipfs/${c}`, timeout: 10000 },
-    { name: "IPFS.io",      url: (c: string) => `https://ipfs.io/ipfs/${c}`, timeout: 12000 },
-    { name: "Web3.Storage", url: (c: string) => `https://${c}.ipfs.w3s.link/`, timeout: 12000 },
-    { name: "DWeb",         url: (c: string) => `https://${c}.ipfs.dweb.link/`, timeout: 12000 },
-    
-    // 🛡️ BACKUP GATEWAYS
-    { name: "Gateway.ipfs", url: (c: string) => `https://gateway.ipfs.io/ipfs/${c}`, timeout: 15000 },
-    { name: "Lighthouse",   url: (c: string) => `https://gateway.lighthouse.storage/ipfs/${c}`, timeout: 15000 },
+    { name: "Pinata",       url: (c: string) => `https://gateway.pinata.cloud/ipfs/${c}`, timeout: 7000 },
+    { name: "Local Kubo",   url: (c: string) => `${getLocalNode(5001)}/api/v0/cat?arg=${c}`, method: "POST", timeout: 3000 },
+    { name: "Relay API",    url: (c: string) => `${getLocalNode(8765)}/ipfs/${c}`, timeout: 4000 },
+    { name: "Cloudflare",   url: (c: string) => `https://cloudflare-ipfs.com/ipfs/${c}`, timeout: 7000 },
+    { name: "IPFS.io",      url: (c: string) => `https://ipfs.io/ipfs/${c}`, timeout: 10000 },
+    { name: "Web3.Storage", url: (c: string) => `https://${c}.ipfs.w3s.link/`, timeout: 10000 },
+    { name: "DWeb",         url: (c: string) => `https://${c}.ipfs.dweb.link/`, timeout: 10000 },
   ]
 
   const fetchWithTimeout = async (gate: any) => {
@@ -295,29 +340,24 @@ export const fetchFromIPFS = async (cid: string): Promise<any> => {
     }
   }
 
-  // 🔄 Multi-Stage Fetching
-  // Stage 1: Fast Fetch (Local + Fast Global)
-  const firstPool = gateways.slice(0, 4)
-  for (const gate of firstPool) {
-    try {
-      // console.log(`📦 [IPFS] Trying ${gate.name}...`)
-      return await fetchWithTimeout(gate)
-    } catch { continue }
-  }
+  // 🏎️ Parallel Racer Pattern
+  // We try the first pool (Fast/Local) in parallel.
+  // If all fail, we try the remaining backup gateways.
+  const fastPool = gateways.slice(0, 3) 
+  const backupPool = gateways.slice(3)
 
-  // Stage 2: Deep Fetch (Parallel fallback for remaining)
-  console.warn(`📦 [IPFS] Fast fetch failed for ${cid.slice(0, 10)}... starting deep scan.`)
-  const remainingPool = gateways.slice(4)
-  
-  // Try them one by one but with higher persistence
-  for (const gate of remainingPool) {
+  try {
+    // Attempt all fast gateways at once
+    return await Promise.any(fastPool.map(g => fetchWithTimeout(g)))
+  } catch (fastErr) {
+    console.warn(`📦 [IPFS] Fast pool failed for ${cid.slice(0, 10)}... trying backups.`)
     try {
-      // console.log(`📦 [IPFS] Probing backup: ${gate.name}...`)
-      return await fetchWithTimeout(gate)
-    } catch { continue }
+      // Fallback to all remaining gateways in parallel
+      return await Promise.any(backupPool.map(g => fetchWithTimeout(g)))
+    } catch (allErr) {
+      throw new Error(`Global Communication Error: Could not fetch content ${cid} from any source. The network may be congested or the content has not propagated yet.`)
+    }
   }
-
-  throw new Error(`Global Communication Error: Could not fetch content ${cid} from any of ${gateways.length} sources. The content may not have propagated yet.`)
 }
 
 export const getIPFSLinks = (cid: string) => ({
@@ -366,15 +406,15 @@ export const startDiscoveryPubSub = async (userEmail: string, publicKey: string)
       // 🛡️ Pre-check connectivity to avoid console flooding
       const controller = new AbortController()
       const timeoutId = setTimeout(() => controller.abort(), 1000)
-      const isReachable = await fetch(`${getLocalNode(5001)}/api/v0/id`, { method: "POST", signal: controller.signal, mode: 'no-cors' })
+      const isReachable = await fetch(`${getLocalNode(5001)}/api/v0/id`, { method: "POST", signal: controller.signal })
         .then(() => true).catch(() => false)
       clearTimeout(timeoutId)
       if (!isReachable) return
 
       const data = JSON.stringify({ type: "announce", email: userEmail, publicKey, timestamp: Date.now() });
-      await fetch(`${getLocalNode(5001)}/api/v0/pubsub/pub?arg=${DISCOVERY_TOPIC}`, {
+      const encodedData = encodeURIComponent(data);
+      await fetch(`${getLocalNode(5001)}/api/v0/pubsub/pub?arg=${DISCOVERY_TOPIC}&arg=${encodedData}`, {
         method: "POST",
-        body: new TextEncoder().encode(data)
       });
     } catch {}
   };
@@ -384,7 +424,7 @@ export const startDiscoveryPubSub = async (userEmail: string, publicKey: string)
       // 🛡️ Pre-check connectivity to avoid console flooding
       const controller = new AbortController()
       const timeoutId = setTimeout(() => controller.abort(), 1000)
-      const isReachable = await fetch(`${getLocalNode(5001)}/api/v0/id`, { method: "POST", signal: controller.signal, mode: 'no-cors' })
+      const isReachable = await fetch(`${getLocalNode(5001)}/api/v0/id`, { method: "POST", signal: controller.signal })
         .then(() => true).catch(() => false)
       clearTimeout(timeoutId)
       if (!isReachable) return

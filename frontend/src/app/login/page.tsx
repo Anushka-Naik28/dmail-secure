@@ -3,8 +3,10 @@
 
 import { useState, useEffect, Suspense } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
-import { db, gun } from "@/utils/gun"
+import { db, gun, derivePGPPassphrase, decryptVaultKey, validatePGPHeader, getOpenPGP } from "@/utils/gun"
+import CryptoJS from "crypto-js"
 import Logo from "@/components/Logo"
+import { Eye, EyeOff, Key, Shield, User, ArrowLeft, ArrowRight } from "lucide-react"
 import {
   saveAccount,
   getSavedAccounts,
@@ -12,11 +14,10 @@ import {
   getAvatarColor,
   type SavedAccount,
 } from "@/utils/accounts"
+import { loginWithPasskey } from "@/utils/webauthn"
 
 function LoginForm() {
   const router = useRouter()
-  const searchParams = useSearchParams()
-  const isAddAccount = searchParams.get("addAccount") === "true"
 
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
@@ -37,13 +38,11 @@ function LoginForm() {
   const [currentEmail, setCurrentEmail] = useState("")
 
   useEffect(() => {
-    if (isAddAccount) {
-      const accounts = getSavedAccounts()
-      setSavedAccounts(accounts)
-      const user = JSON.parse(localStorage.getItem("user") || "{}")
-      setCurrentEmail(user.email || "")
-    }
-  }, [isAddAccount])
+    const accounts = getSavedAccounts()
+    setSavedAccounts(accounts)
+    const user = JSON.parse(localStorage.getItem("user") || "{}")
+    setCurrentEmail(user.email || "")
+  }, [])
 
   const checkStrength = (pwd: string) => {
     let score = 0
@@ -62,49 +61,256 @@ function LoginForm() {
     window.location.href = "/dashboard/inbox"
   }
 
-  const login = () => {
+  const handlePasskeyLogin = async () => {
+    if (!email) {
+      setLoginMessage({ text: "Please enter your email to use Passkey.", type: "error" })
+      return
+    }
+    setLoading(true)
+    setLoginMessage({ text: "Authenticating with Passkey...", type: "success" })
+
+    try {
+      const userData = await loginWithPasskey(email)
+      if (userData) {
+        // Success! Passkey verified.
+        // If we have the password in mesh, we use it. 
+        // If not, we might need it for PGP decryption unless we have a passkey-encrypted vault key.
+        const userObj = {
+          ...userData,
+          addedAt: Date.now()
+        }
+        localStorage.setItem("user", JSON.stringify(userObj))
+        saveAccount(userObj)
+        
+        setLoginMessage({ text: "Passkey Verified! Accessing Inbox...", type: "success" })
+        setLoading(false)
+        setTimeout(() => router.push("/dashboard/inbox"), 1000)
+      }
+    } catch (err: any) {
+      console.error("Passkey Login Error:", err)
+      setLoginMessage({ text: err.message || "Passkey authentication failed.", type: "error" })
+      setLoading(false)
+    }
+  }
+
+  const login = async () => {
     if (!email || !password) {
       setLoginMessage({ text: "Please enter your email and password.", type: "error" })
       return
     }
     setLoading(true)
-    setLoginMessage({ text: "Connecting to secure network...", type: "success" })
+    setLoginMessage({ text: "Calculating cryptographic identity...", type: "success" })
 
-    db.getUser(email, (userData: any) => {
-      if (!userData || !userData.email) {
-        setLoginMessage({ text: "Account not found. Please check your email.", type: "error" })
-        setLoading(false)
-        return
-      }
-      if (userData.password !== password) {
-        setLoginMessage({ text: "Incorrect password. Please try again.", type: "error" })
-        setLoading(false)
-        return
-      }
+    try {
+      const cleanEmail = email.trim().toLowerCase()
+      const pPass = derivePGPPassphrase(password)
 
-      const userObj = {
-        name: userData.name,
-        email: userData.email,
-        password: userData.password,
-        publicKey: userData.publicKey,
-        privateKey: userData.privateKey || "",
+      // ─── PRIORITY 1: Check for locally saved keys on this device ───
+      setLoginMessage({ text: "Checking local identity vault...", type: "success" })
+      const savedAccounts = getSavedAccounts()
+      const localAccount = savedAccounts.find(a => a.email?.toLowerCase() === cleanEmail)
+
+      let userObj: any = {
+        name: email.split("@")[0],
+        email: cleanEmail,
+        password: password,
+        isDeterministic: true,
         addedAt: Date.now(),
+      }
+
+      let localKeyValid = false
+      if (localAccount && localAccount.privateKey && localAccount.publicKey) {
+        setLoginMessage({ text: "Validating passphrase against local identity...", type: "success" })
+        
+        try {
+          const openpgp = await getOpenPGP()
+          const decryptedArmored = decryptVaultKey(localAccount.privateKey, password)
+          if (validatePGPHeader(decryptedArmored)) {
+            const passphraseCandidates = [pPass, password]
+            let decryptedLocal = false
+            for (const passCandidate of passphraseCandidates) {
+              try {
+                await openpgp.decryptKey({
+                  privateKey: await openpgp.readPrivateKey({ armoredKey: decryptedArmored }),
+                  passphrase: passCandidate,
+                })
+                decryptedLocal = true
+                break
+              } catch (e) {
+                // Try next candidate
+              }
+            }
+            if (decryptedLocal) {
+              localKeyValid = true
+              userObj.publicKey = localAccount.publicKey
+              userObj.privateKey = localAccount.privateKey
+              userObj.fastPublicKey = localAccount.fastPublicKey || ""
+              userObj.fastPrivateKey = localAccount.fastPrivateKey || ""
+              if (localAccount.name) userObj.name = localAccount.name
+            }
+          }
+        } catch {
+          // Fallback to mesh if local fails (maybe password changed elsewhere)
+        }
+      }
+
+      let meshKeyValid = false
+      if (!localKeyValid) {
+        // ─── PRIORITY 2: Check the mesh for an existing identity ───
+        setLoginMessage({ text: "Searching global mesh for existing identity...", type: "success" })
+        
+        // Use a more aggressive lookup for the password node specifically
+        let cloudData = await new Promise<any>(res => {
+          const timeout = setTimeout(() => res(null), 12000)
+          db.getUser(email, (data) => {
+            if (data && data.publicKey) {
+              clearTimeout(timeout)
+              res(data)
+            }
+          }, true)
+        })
+
+        if (cloudData && (cloudData.publicKey || cloudData.vaultCID)) {
+          setLoginMessage({ text: "Identity found on mesh. Verifying passphrase...", type: "success" })
+          
+          if (cloudData.vaultCID) {
+            try {
+              const { fetchVault } = await import("@/utils/ipfs")
+              const encryptedVault = await fetchVault(cloudData.vaultCID)
+              const CryptoJS = await import("crypto-js")
+              const bytes = CryptoJS.AES.decrypt(encryptedVault, password)
+              const decryptedVault = JSON.parse(bytes.toString(CryptoJS.enc.Utf8))
+              
+              if (decryptedVault && decryptedVault.privateKey) {
+                cloudData = { ...cloudData, ...decryptedVault }
+                meshKeyValid = true
+              }
+            } catch (e) {
+              console.warn("⚠️ Cloud Vault recovery failed.")
+            }
+          }
+
+          if (!meshKeyValid && cloudData.privateKey) {
+            try {
+              const openpgp = await getOpenPGP()
+              const decryptedArmored = decryptVaultKey(cloudData.privateKey, password)
+              if (validatePGPHeader(decryptedArmored)) {
+                const passphraseCandidates = [pPass, password]
+                let decryptedMesh = false
+                for (const passCandidate of passphraseCandidates) {
+                  try {
+                    await openpgp.decryptKey({
+                      privateKey: await openpgp.readPrivateKey({ armoredKey: decryptedArmored }),
+                      passphrase: passCandidate,
+                    })
+                    decryptedMesh = true
+                    break
+                  } catch (e) {
+                    // Try next candidate
+                  }
+                }
+                if (decryptedMesh) {
+                  meshKeyValid = true
+                }
+              }
+            } catch (decryptErr) {
+               // If decrypt fails but password matches stored (legacy/migration)
+               if (cloudData.password === password) meshKeyValid = true
+            }
+          }
+
+          if (meshKeyValid) {
+            userObj.publicKey = cloudData.publicKey
+            userObj.privateKey = cloudData.privateKey
+            userObj.fastPublicKey = cloudData.fastPublicKey || ""
+            userObj.fastPrivateKey = cloudData.fastPrivateKey || ""
+            if (cloudData.name) userObj.name = cloudData.name
+          }
+        }
+      }
+
+      if (!localKeyValid && !meshKeyValid) {
+        setLoginMessage({ text: "Searching mesh failed. Attempting Sovereign Recovery...", type: "success" })
+        
+        try {
+          const { generateSovereignIdentity } = await import("@/utils/identity")
+          const identity = await generateSovereignIdentity(email, password)
+          
+          if (identity && identity.publicKey) {
+            userObj.publicKey = identity.publicKey
+            userObj.privateKey = identity.privateKey
+            userObj.fastPublicKey = identity.fastPublicKey || ""
+            userObj.fastPrivateKey = identity.fastPrivateKey || ""
+            if (identity.name) userObj.name = identity.name
+            meshKeyValid = true
+          }
+        } catch (recoveryErr) {
+          console.error("Sovereign Fallback Failed:", recoveryErr)
+          setLoginMessage({ text: "Identity not found and recovery failed. Check your password.", type: "error" })
+          setLoading(false)
+          return
+        }
+      }
+
+      // 📡 [Restore Session] Ensure keys are announced and saved locally
+      localStorage.setItem("user", JSON.stringify(userObj))
+      saveAccount(userObj)
+
+      // 📡 Initialise Nostr Mesh
+      const { nostr } = await import("@/utils/nostr")
+      await nostr.initUserKeys(userObj.email, userObj.password)
+      nostr.announce({
+        email: userObj.email,
+        publicKey: userObj.publicKey,
+        did: userObj.did || "",
+        timestamp: Date.now(),
+      })
+
+      setLoginMessage({ text: "Identity Verified. Accessing Inbox...", type: "success" })
+      setLoading(false)
+      setTimeout(() => router.push("/dashboard/inbox"), 1000)
+    } catch (err: any) {
+      console.error("Login Error:", err)
+      setLoginMessage({ text: "Authentication failed. Please check your network connection.", type: "error" })
+      setLoading(false)
+    }
+  }
+
+  const restoreIdentity = async () => {
+    if (!email || !password) {
+      setLoginMessage({ text: "Enter email and password to restore identity.", type: "error" })
+      return
+    }
+    setLoading(true)
+    setLoginMessage({ text: "Sovereign Restoration: Re-calculating keys...", type: "success" })
+
+    try {
+      const { generateSovereignIdentity } = await import("@/utils/identity")
+      const identity = await generateSovereignIdentity(email, password)
+      
+      const userObj = {
+        name: email.split("@")[0],
+        email: email.trim().toLowerCase(),
+        password: password,
+        publicKey: identity.publicKey,
+        privateKey: identity.privateKey,
+        fastPublicKey: identity.fastPublicKey,
+        fastPrivateKey: identity.fastPrivateKey,
+        did: identity.did,
+        isDeterministic: true,
+        addedAt: Date.now()
       }
 
       localStorage.setItem("user", JSON.stringify(userObj))
       saveAccount(userObj)
-
-      // 📡 Initialise Nostr DM keys so this device can send/receive via free global relays
-      import("@/utils/nostr").then(({ nostr }) => {
-        nostr.initUserKeys(userData.email, userData.password).then(pubkey => {
-          console.log(`📡 [Nostr] Relay keys ready. Pubkey: ${pubkey.slice(0, 12)}...`)
-        })
-      })
-
-      setLoginMessage({ text: `Welcome back, ${userData.name}!`, type: "success" })
+      
+      setLoginMessage({ text: "Identity Restored! Connecting to mesh...", type: "success" })
       setLoading(false)
-      setTimeout(() => router.push("/dashboard/inbox"), 1200)
-    })
+      setTimeout(() => router.push("/dashboard/inbox"), 1000)
+    } catch (err) {
+      setLoginMessage({ text: "Restoration failed. Verify credentials.", type: "error" })
+      setLoading(false)
+    }
   }
 
   const resetPassword = () => {
@@ -135,7 +341,7 @@ function LoginForm() {
         setStrength("")
         setResetMessage(null)
       }, 1500)
-    })
+    }, true)
   }
 
   return (
@@ -143,95 +349,70 @@ function LoginForm() {
       <div className="auth-card">
 
         {/* Updated Header with ETHREX DMail Logo */}
-        <div style={{ textAlign: "center", marginBottom: "32px", display: "flex", flexDirection: "column", alignItems: "center" }}>
+        <div className="auth-header">
           <Logo size={48} layout="horizontal" showText={true} />
-          <div style={{ marginTop: "24px" }}>
-            <h2 style={{ fontWeight: "600", fontSize: "24px", color: "var(--text-bright)" }}>
-              {isAddAccount ? "Add another account" : "Sign In"}
-            </h2>
-            <p style={{ color: "var(--text-muted)", fontSize: "14px", marginTop: "8px" }}>
-              {isAddAccount
-                ? "Sign in to add a second DMail account"
-                : "Enter your decentralized identity credentials"}
-            </p>
+          <div className="auth-header-content">
+            <h2 className="auth-title">Sign In</h2>
+            <p className="auth-subtitle">Enter your decentralized identity credentials</p>
           </div>
         </div>
 
-        {/* ── Saved accounts — ONLY shown in add-account mode ── */}
-        {isAddAccount && savedAccounts.length > 0 && (
-          <div style={{ marginBottom: "20px" }}>
-            <div style={{
-              fontSize: "11px", fontWeight: "700", color: "var(--text-muted)",
-              textTransform: "uppercase", letterSpacing: "0.8px", marginBottom: "8px",
-            }}>
-              Existing accounts
+        {/* ── Saved Accounts Panel ── */}
+        {savedAccounts.length > 0 && (
+          <div style={{ marginBottom: "24px" }}>
+            <div style={{ fontSize: "11px", fontWeight: "700", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "1px", marginBottom: "12px" }}>
+              Saved Accounts
             </div>
-
-            <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
-              {savedAccounts.map((account) => {
-                const isActive = account.email === currentEmail
-                return (
-                  <div
-                    key={account.email}
-                    onClick={() => !isActive && handleQuickSwitch(account)}
-                    style={{
-                      display: "flex", alignItems: "center", gap: "10px",
-                      padding: "10px 12px", borderRadius: "10px",
-                      cursor: isActive ? "default" : "pointer",
-                      border: `1px solid ${isActive ? "var(--gold-mid)" : "var(--border-gold)"}`,
-                      background: isActive ? "rgba(212,160,23,0.06)" : "none",
-                      transition: "all 0.15s ease",
-                    }}
-                    onMouseEnter={(e) => {
-                      if (!isActive) (e.currentTarget as HTMLDivElement).style.background = "rgba(212,160,23,0.04)"
-                    }}
-                    onMouseLeave={(e) => {
-                      if (!isActive) (e.currentTarget as HTMLDivElement).style.background = "none"
-                    }}
-                  >
-                    <div style={{
-                      width: "36px", height: "36px", borderRadius: "50%", flexShrink: 0,
-                      background: getAvatarColor(account.email),
-                      display: "flex", alignItems: "center", justifyContent: "center",
-                      fontSize: "14px", fontWeight: "800", color: "#fff",
-                    }}>
-                      {(account.name || account.email).charAt(0).toUpperCase()}
-                    </div>
-
-                    <div style={{ flex: 1, overflow: "hidden" }}>
-                      <div style={{
-                        fontSize: "13px", fontWeight: "700",
-                        color: isActive ? "var(--gold-mid)" : "var(--text-bright)",
-                        overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-                      }}>
-                        {account.name || account.email.split("@")[0]}
-                      </div>
-                      <div style={{
-                        fontSize: "11px", color: "var(--text-muted)",
-                        overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-                      }}>
-                        {account.email}
-                      </div>
-                    </div>
-
-                    {isActive ? (
-                      <span style={{
-                        fontSize: "10px", padding: "2px 8px", borderRadius: "8px",
-                        background: "rgba(212,160,23,0.15)", color: "var(--gold-mid)",
-                        border: "1px solid rgba(212,160,23,0.3)", flexShrink: 0,
-                      }}>Active</span>
-                    ) : (
-                      <span style={{ fontSize: "11px", color: "var(--text-muted)", flexShrink: 0 }}>→</span>
-                    )}
+            <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+              {savedAccounts.map((acc) => (
+                <button
+                  key={acc.email}
+                  onClick={() => handleQuickSwitch(acc)}
+                  style={{
+                    display: "flex", alignItems: "center", gap: "14px",
+                    padding: "12px 16px", borderRadius: "14px",
+                    background: acc.email === currentEmail ? "rgba(212, 175, 55, 0.08)" : "var(--bg-card)",
+                    border: acc.email === currentEmail ? "1px solid rgba(212, 175, 55, 0.35)" : "1px solid var(--border-color)",
+                    cursor: "pointer", transition: "all 0.2s ease", textAlign: "left", width: "100%"
+                  }}
+                  onMouseOver={e => { e.currentTarget.style.background = "rgba(212, 175, 55, 0.1)"; e.currentTarget.style.borderColor = "rgba(212, 175, 55, 0.4)" }}
+                  onMouseOut={e => {
+                    e.currentTarget.style.background = acc.email === currentEmail ? "rgba(212, 175, 55, 0.08)" : "var(--bg-card)"
+                    e.currentTarget.style.borderColor = acc.email === currentEmail ? "rgba(212, 175, 55, 0.35)" : "var(--border-color)"
+                  }}
+                >
+                  {/* Avatar */}
+                  <div style={{
+                    width: "40px", height: "40px", borderRadius: "50%", flexShrink: 0,
+                    background: getAvatarColor(acc.email),
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    fontSize: "16px", fontWeight: "800", color: "var(--bg-body)"
+                  }}>
+                    {(acc.name || acc.email).charAt(0).toUpperCase()}
                   </div>
-                )
-              })}
+                  {/* Info */}
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: "14px", fontWeight: "700", color: "var(--text-bright)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {acc.name || acc.email.split("@")[0]}
+                    </div>
+                    <div style={{ fontSize: "12px", color: "var(--text-muted)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {acc.email}
+                    </div>
+                  </div>
+                  {/* Active badge or arrow */}
+                  {acc.email === currentEmail ? (
+                    <span style={{ fontSize: "10px", padding: "3px 10px", borderRadius: "20px", background: "rgba(212, 175, 55, 0.15)", color: "var(--gold-mid)", fontWeight: "800", letterSpacing: "0.5px", flexShrink: 0 }}>ACTIVE</span>
+                  ) : (
+                    <ArrowRight size={16} color="var(--text-dim)" style={{ flexShrink: 0 }} />
+                  )}
+                </button>
+              ))}
             </div>
-
-            <div style={{ display: "flex", alignItems: "center", gap: "10px", margin: "16px 0" }}>
-              <div style={{ flex: 1, height: "1px", background: "var(--border-gold)" }} />
-              <span style={{ fontSize: "11px", color: "var(--text-muted)" }}>or sign in with another account</span>
-              <div style={{ flex: 1, height: "1px", background: "var(--border-gold)" }} />
+            {/* Divider */}
+            <div style={{ display: "flex", alignItems: "center", gap: "12px", margin: "20px 0 0" }}>
+              <div style={{ flex: 1, height: "1px", background: "var(--border-color)" }} />
+              <span style={{ fontSize: "11px", color: "var(--text-muted)", fontWeight: "600", letterSpacing: "0.5px" }}>OR SIGN IN WITH DIFFERENT ACCOUNT</span>
+              <div style={{ flex: 1, height: "1px", background: "var(--border-color)" }} />
             </div>
           </div>
         )}
@@ -292,8 +473,10 @@ function LoginForm() {
             />
             <span
               onClick={() => setShowPassword(!showPassword)}
-              style={{ position: "absolute", right: "12px", top: "50%", transform: "translateY(-50%)", cursor: "pointer", fontSize: "14px" }}
-            >{showPassword ? "🙈" : "👁️"}</span>
+              style={{ position: "absolute", right: "12px", top: "50%", transform: "translateY(-50%)", cursor: "pointer", color: "var(--text-dim)", display: "flex" }}
+            >
+              {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+            </span>
           </div>
 
           <div style={{ textAlign: "right", marginTop: "6px" }}>
@@ -303,15 +486,28 @@ function LoginForm() {
             >Forgot Password?</button>
           </div>
 
-          <div style={{ marginTop: "32px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <button
-              onClick={() => router.push("/signup")}
-              style={{ background: "none", border: "none", color: "var(--gold-mid)", fontWeight: "500", cursor: "pointer", fontFamily: "Raleway, sans-serif" }}
-            >Create account</button>
-            <button
-              className="btn" onClick={login} disabled={loading}
-              style={{ opacity: loading ? 0.7 : 1, cursor: loading ? "not-allowed" : "pointer" }}
-            >{loading ? "Signing in..." : "Next"}</button>
+          <div className="auth-button-row" style={{ marginTop: "24px", flexDirection: "column", gap: "12px" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", width: "100%" }}>
+              <button
+                onClick={() => router.push("/signup")}
+                style={{ background: "none", border: "none", color: "var(--text-dim)", fontWeight: "500", cursor: "pointer", fontSize: "13px" }}
+              >Create account</button>
+              <div style={{ display: "flex", gap: "10px" }}>
+                <button
+                  onClick={restoreIdentity} disabled={loading}
+                  style={{ 
+                    background: "rgba(212, 175, 55, 0.1)", color: "var(--gold-mid)", border: "1px solid rgba(212, 175, 55, 0.2)",
+                    borderRadius: "8px", padding: "10px 16px", fontSize: "13px", fontWeight: "600", cursor: "pointer",
+                    opacity: loading ? 0.6 : 1
+                  }}
+                >Restore</button>
+                <button
+                  className="btn" onClick={login} disabled={loading}
+                  style={{ opacity: loading ? 0.7 : 1, cursor: loading ? "not-allowed" : "pointer" }}
+                >{loading ? "Signing in..." : "Sign In"}</button>
+              </div>
+            </div>
+
           </div>
         </div>
       </div>
@@ -320,8 +516,10 @@ function LoginForm() {
       {showForgotModal && (
         <div className="modal-overlay">
           <div className="modal-content">
-            <div style={{ fontSize: "28px", marginBottom: "8px" }}>🔑</div>
-            <h3>Reset Password</h3>
+            <div style={{ color: "var(--gold-mid)", marginBottom: "16px", display: "flex", justifyContent: "center" }}>
+              <Key size={40} />
+            </div>
+            <h3 style={{ fontFamily: "'Cinzel', serif", fontSize: "22px", color: "var(--gold-mid)", marginBottom: "12px" }}>Reset Password</h3>
             <p style={{ fontSize: "13px", color: "var(--text-muted)", marginBottom: "16px" }}>
               Enter your DMail email and choose a new password.
             </p>
@@ -358,8 +556,10 @@ function LoginForm() {
               />
               <span
                 onClick={() => setShowResetPassword(!showResetPassword)}
-                style={{ position: "absolute", right: "12px", top: "50%", transform: "translateY(-50%)", cursor: "pointer" }}
-              >{showResetPassword ? "🙈" : "👁️"}</span>
+                style={{ position: "absolute", right: "12px", top: "50%", transform: "translateY(-50%)", cursor: "pointer", color: "var(--text-dim)", display: "flex" }}
+              >
+                {showResetPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+              </span>
             </div>
 
             {newPassword && (
@@ -385,13 +585,7 @@ function LoginForm() {
 
 export default function Login() {
   return (
-    <Suspense fallback={
-      <div className="page-center">
-        <div style={{ color: "var(--gold-mid)", fontFamily: "Ralway, sans-serif" }}>
-          Initializing Secure Connection...
-        </div>
-      </div>
-    }>
+    <Suspense fallback={null}>
       <LoginForm />
     </Suspense>
   )

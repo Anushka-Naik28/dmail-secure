@@ -1,10 +1,13 @@
 "use client"
 
 import { useState, useRef, useEffect } from "react"
-import { db, encryptMessage, sendMailNow } from "@/utils/gun"
-import { autoSaveContact } from "@/utils/contacts"
-import { uploadFileToIPFS } from "@/utils/ipfs"
+import { db } from "@/utils/gun"
 import { isStorageReady } from "@/utils/web3storage"
+import { 
+  PenLine, Save, Minus, Maximize2, Minimize2, X, 
+  Check, WifiOff, AlertCircle, Send, Calendar, 
+  Paperclip, Archive, Clock, ShieldCheck, AlertTriangle, Link, Lock
+} from "lucide-react"
 
 type StatusType = "idle" | "sending" | "success" | "error"
 type WindowState = "open" | "minimized" | "maximized"
@@ -26,54 +29,6 @@ interface ComposeWindowProps {
   defaultMessage?: string
 }
 
-// ── Proof-of-Work ─────────────────────────────────────────────
-// Finds a nonce such that SHA-256(mailHash + nonce) starts with `difficulty` zeros
-// Runs in the browser using Web Crypto API — no server needed
-const computePoW = async (
-  mailHash: string,
-  difficulty: number = 3,
-  onProgress?: (nonce: number) => void
-): Promise<{ nonce: number; hash: string }> => {
-  const prefix = "0".repeat(difficulty)
-  let nonce = 0
-
-  while (true) {
-    const input = `${mailHash}:${nonce}`
-    const buffer = await crypto.subtle.digest(
-      "SHA-256",
-      new TextEncoder().encode(input)
-    )
-    const hashArray = Array.from(new Uint8Array(buffer))
-    const hashHex = hashArray.map((b) => b.toString(16).padStart(2, "0")).join("")
-
-    if (hashHex.startsWith(prefix)) {
-      return { nonce, hash: hashHex }
-    }
-
-    nonce++
-    if (nonce % 500 === 0 && onProgress) onProgress(nonce)
-
-    // Yield to UI every 1000 iterations to avoid freezing
-    if (nonce % 1000 === 0) {
-      await new Promise((resolve) => setTimeout(resolve, 0))
-    }
-  }
-}
-
-// Hash the mail content to use as PoW challenge
-const hashMailContent = async (
-  senderEmail: string,
-  recipientEmail: string,
-  subject: string
-): Promise<string> => {
-  const content = `${senderEmail}:${recipientEmail}:${subject}:${Date.now()}`
-  const buffer = await crypto.subtle.digest(
-    "SHA-256",
-    new TextEncoder().encode(content)
-  )
-  const hashArray = Array.from(new Uint8Array(buffer))
-  return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("")
-}
 
 export default function ComposeWindow({
   onClose,
@@ -97,21 +52,18 @@ export default function ComposeWindow({
   const [draftSaved, setDraftSaved]         = useState(false)
   const [encryptionReady, setEncryptionReady] = useState<"checking" | "ready" | "no-key">("checking")
 
-  // ── PoW state ──
-  const [powProgress, setPowProgress]     = useState(0)
-  const [powHash, setPowHash]             = useState<string | null>(null)
-  const [showPowInfo, setShowPowInfo]     = useState(false)
   const [storageReady, setStorageReady]   = useState(false)
 
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
-    if (!recipientEmail || !recipientEmail.includes("@")) {
+    const normalizedRecipient = recipientEmail.trim().toLowerCase()
+    if (!normalizedRecipient || !normalizedRecipient.includes("@")) {
       setEncryptionReady("checking")
       return
     }
     const timer = setTimeout(() => {
-      db.getUser(recipientEmail, (data: any) => {
+      db.getUser(normalizedRecipient, (data: any) => {
         setEncryptionReady(data?.publicKey ? "ready" : "no-key")
       })
     }, 600)
@@ -131,16 +83,17 @@ export default function ComposeWindow({
   const saveDraft = (auto = false) => {
     const user = JSON.parse(localStorage.getItem("user") || "{}")
     if (!user.email) return
-    const drafts = JSON.parse(localStorage.getItem(`drafts_${user.email}`) || "[]")
+    const normalizedEmail = user.email.trim().toLowerCase()
+    const drafts = JSON.parse(localStorage.getItem(`drafts_${normalizedEmail}`) || "[]")
     const draft = {
       id:      `draft_${Date.now()}`,
-      to:      recipientEmail,
+      to:      recipientEmail.trim().toLowerCase(),
       subject,
       message,
       savedAt: new Date().toLocaleString(),
     }
     drafts.unshift(draft)
-    localStorage.setItem(`drafts_${user.email}`, JSON.stringify(drafts.slice(0, 20)))
+    localStorage.setItem(`drafts_${normalizedEmail}`, JSON.stringify(drafts.slice(0, 20)))
     if (!auto) {
       setDraftSaved(true)
       setTimeout(() => setDraftSaved(false), 2500)
@@ -189,166 +142,37 @@ export default function ComposeWindow({
   }
 
   const sendMail = async () => {
-    const user = JSON.parse(localStorage.getItem("user") || "{}")
-    if (!recipientEmail || !subject || !message) {
+    const userJson = localStorage.getItem("user")
+    const user = userJson ? JSON.parse(userJson) : {}
+    const normalizedRecipient = recipientEmail.trim().toLowerCase()
+    
+    if (!normalizedRecipient || !subject || !message) {
       setStatus("error")
       setStatusMsg("Please fill in all fields before sending.")
       return
     }
 
-    setStatus("sending")
-    setStatusMsg("Looking up recipient...")
-    setWasQueued(false)
-    setPowProgress(0)
-    setPowHash(null)
+    try {
+      const { sendMailInBackground } = await import("@/utils/backgroundSend")
+      
+      // 🔥 INSTANT DISPATCH: We don't wait for encryption/PoW/IPFS
+      sendMailInBackground({
+        user,
+        recipientEmail: normalizedRecipient,
+        subject,
+        message,
+        attachments,
+        scheduleDate,
+        scheduleTime
+      })
 
-    db.getUser(recipientEmail, async (recipientData: any) => {
-      // If GunDB can't find them, try the Nostr mesh as a fallback
-      if (!recipientData?.publicKey) {
-        setStatusMsg("🌐 Searching global discovery mesh...")
-        try {
-          const { nostr } = await import("@/utils/nostr")
-          const meshData = await nostr.find(recipientEmail, true)
-          if (meshData?.publicKey) {
-            recipientData = meshData
-          }
-        } catch {}
-      }
-
-      // If still not found after all lookups — send unencrypted as last resort
-      if (!recipientData) {
-        recipientData = { email: recipientEmail, publicKey: null }
-      }
-
-      try {
-        // ── Step 1: Proof-of-Work ──────────────────────────────
-        setStatusMsg("⛏️ Computing proof-of-work...")
-        const mailHash = await hashMailContent(user.email, recipientEmail, subject)
-        
-        let finalNonce = 0
-        let finalHash = ""
-
-        if (typeof window !== "undefined" && !window.crypto?.subtle) {
-           console.warn("⚠️ WebCrypto subtle is missing. Skipping PoW.")
-           setPowHash("SKIP_INSECURE")
-        } else {
-          const { nonce, hash } = await computePoW(
-            mailHash,
-            3, // difficulty: 3 leading zeros ≈ ~4000 iterations, ~100ms
-            (n) => {
-              setPowProgress(n)
-              setStatusMsg(`⛏️ Proof-of-work... (${n.toLocaleString()} attempts)`)
-            }
-          )
-          setPowHash(hash)
-          finalNonce = nonce
-          finalHash = hash
-          // console.log(`✅ PoW solved: nonce=${nonce}, hash=${hash}`)
-        }
-
-        // ── Step 2: Encrypt (with Silent Identity Discovery) ──
-        let encryptedMessage = ""
-        let attempts = 0
-        while (attempts < 3) {
-          try {
-            setStatusMsg(attempts === 0 ? "🔒 Encrypting with PGP..." : "🔭 Still resolving recipient's identity...")
-            encryptedMessage = await encryptMessage(message, recipientData.publicKey, recipientData.email)
-            break // Success!
-          } catch (encErr: any) {
-            if (encErr.message.includes("IDENTITY_RECOVERY_FAILED") && attempts < 2) {
-              console.log("🛡️ [Compose] Discovery Storm in progress... retrying in 5s.")
-              attempts++
-              await new Promise(r => setTimeout(r, 5000))
-              // Fresh lookup to see if the storm found a better key
-              const freshData = await new Promise<any>(res => db.getUser(recipientEmail, res))
-              if (freshData?.publicKey) recipientData = freshData
-            } else {
-              throw encErr // Permanent failure or other error
-            }
-          }
-        }
-
-        // ── Step 3: Upload attachments ─────────────────────────
-        const finalAttachments = []
-        for (const att of attachments) {
-          if (att.type === "local" && att.rawFile) {
-            setStatusMsg(`📎 Uploading ${att.name} to IPFS...`)
-            try {
-              const cid = await uploadFileToIPFS(att.rawFile, att.name)
-              finalAttachments.push({ ...att, type: "ipfs", cid, rawFile: undefined, data: undefined })
-            } catch {
-              setStatus("error")
-              setStatusMsg(`Failed to upload ${att.name}`)
-              return
-            }
-          } else {
-            finalAttachments.push({ ...att, rawFile: undefined, data: undefined })
-          }
-        }
-
-        const ipfsRefs = finalAttachments
-          .filter((a) => a.type === "ipfs")
-          .map((a) => `\n\n[IPFS Attachment: ${a.cid}]`)
-          .join("")
-
-        const mail = {
-          senderEmail:     user.email,
-          receiverEmail:   recipientEmail,
-          subject,
-          message:         encryptedMessage + ipfsRefs,
-          time:            new Date().toLocaleString(),
-          scheduledTimeText: scheduleDate && scheduleTime ? `${scheduleDate} ${scheduleTime}` : null,
-          status:          "inbox",
-          isStarred:       false,
-          hasAttachments:  finalAttachments.length > 0,
-          attachmentCount: finalAttachments.length,
-          attachments:     finalAttachments,
-          // ── PoW proof stored with mail ──
-          pow: { nonce: finalNonce, hash: finalHash, difficulty: finalHash ? 3 : 0 },
-        }
-
-        if (scheduleDate && scheduleTime) {
-          const targetTime = new Date(`${scheduleDate}T${scheduleTime}`).getTime()
-          const scheduledMail = { ...mail, targetTime, targetTimeText: `${scheduleDate} ${scheduleTime}`, id: `sched_${Date.now()}` }
-          
-          const scheduledMails = JSON.parse(localStorage.getItem(`scheduled_${user.email}`) || "[]")
-          scheduledMails.push(scheduledMail)
-          localStorage.setItem(`scheduled_${user.email}`, JSON.stringify(scheduledMails))
-          
-          setStatus("success")
-          setStatusMsg(`✅ Scheduled for ${scheduleDate} ${scheduleTime}`)
-        } else {
-          setStatusMsg("📦 Sending to global network...")
-          try {
-            const id = await sendMailNow(mail)
-
-            if (user.publicKey && user.privateKey && user.password) {
-              await autoSaveContact(
-                recipientEmail.split("@")[0], recipientEmail,
-                user.email, user.publicKey, user.privateKey, user.password
-              )
-            }
-
-            setStatus("success")
-            setStatusMsg(`✅ Sent to ${recipientEmail}`)
-          } catch (sendErr) {
-            // If IPFS/GunDB fails, queue offline
-            const { addToQueue } = await import("@/utils/offlineQueue")
-            addToQueue(mail)
-            setWasQueued(true)
-            setStatus("success")
-            setStatusMsg(`📴 Queued — will send when network is available`)
-          }
-        }
-
-        setTimeout(() => onClose(), 1500)
-
-      } catch (err: any) {
-        setStatus("error")
-        setStatusMsg(`Error: ${err?.message || "Failed to send. Please try again."}`)
-        console.error("Critical Send Failure:", err)
-      }
-    })
+      // Close immediately
+      onClose()
+      
+    } catch (err: any) {
+      setStatus("error")
+      setStatusMsg(`Dispatch Error: ${err?.message}`)
+    }
   }
 
   // ── Minimized pill ──────────────────────────────────────────
@@ -362,12 +186,12 @@ export default function ComposeWindow({
           borderBottom: "none", borderRadius: "10px 10px 0 0",
           padding: "10px 20px", cursor: "pointer",
           display: "flex", alignItems: "center", gap: "10px",
-          boxShadow: "0 -4px 20px rgba(0,0,0,0.3)",
-          fontFamily: "Raleway, sans-serif",
+          boxShadow: "var(--shadow-deep)",
+          fontFamily: "Inter, sans-serif",
         }}
       >
-        <span style={{ fontSize: "13px", color: "var(--text-bright)", fontWeight: "700" }}>
-          ✏️ {subject || "New Message"}
+        <span style={{ fontSize: "13px", color: "var(--text-bright)", fontWeight: "700", display: "flex", alignItems: "center", gap: "8px" }}>
+          <PenLine size={14} color="var(--gold-mid)" /> {subject || "New Message"}
         </span>
         <span style={{ fontSize: "11px", color: "var(--text-muted)" }}>
           {recipientEmail || "No recipient"}
@@ -375,8 +199,8 @@ export default function ComposeWindow({
         <span style={{
           marginLeft: "8px", fontSize: "11px", color: "var(--text-muted)",
           padding: "2px 8px", borderRadius: "6px",
-          background: "rgba(212,160,23,0.1)",
-        }}>▲ Open</span>
+          background: "rgba(212, 175, 55,0.1)",
+        }}>Expand</span>
       </div>
     )
   }
@@ -388,173 +212,96 @@ export default function ComposeWindow({
       position: "fixed", zIndex: 1000,
       bottom:    isMaximized ? "0"     : "24px",
       right:     isMaximized ? "0"     : "24px",
-      width:     isMaximized ? "100vw" : "540px",
-      height:    isMaximized ? "100vh" : "auto",
-      maxHeight: isMaximized ? "100vh" : "80vh",
-      background: "var(--bg-card)",
-      border: "1px solid var(--border-gold)",
-      borderRadius: isMaximized ? "0" : "14px",
-      boxShadow: "0 8px 40px rgba(0,0,0,0.5)",
+      width:     isMaximized ? "100vw" : "800px",
+      height:    isMaximized ? "100vh" : "600px",
+      background: "var(--bg-input)",
+      borderTop: "4px solid var(--gold-mid)",
+      borderRadius: isMaximized ? "0" : "8px",
+      boxShadow: "var(--shadow-deep)",
       display: "flex", flexDirection: "column",
       overflow: "hidden", transition: "all 0.2s ease",
+      fontFamily: "Inter, sans-serif"
     }}>
 
-      {/* ── Title bar ── */}
+      {/* ── Header ── */}
       <div style={{
         display: "flex", alignItems: "center", justifyContent: "space-between",
-        padding: "12px 16px",
-        background: "linear-gradient(135deg, rgba(212,160,23,0.12), rgba(212,160,23,0.06))",
-        borderBottom: "1px solid var(--border-gold)",
-        flexShrink: 0,
+        padding: "20px 24px", background: "var(--bg-input)"
       }}>
-        <span style={{ fontSize: "13px", fontWeight: "800", color: "var(--text-bright)", fontFamily: "Raleway, sans-serif" }}>
-          ✏️ New Message
+        <span style={{ fontSize: "16px", fontWeight: "600", color: "var(--gold-mid)" }}>
+          New Message
         </span>
-        <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-          {draftSaved && (
-            <span style={{ fontSize: "11px", color: "#4caf6e", marginRight: "4px" }}>💾 Draft saved</span>
-          )}
-          <button onClick={() => saveDraft(false)} title="Save Draft" style={{ background: "none", border: "1px solid var(--border-gold)", borderRadius: "6px", padding: "3px 8px", cursor: "pointer", color: "var(--text-muted)", fontSize: "11px", fontFamily: "Raleway, sans-serif" }}>💾</button>
-          <button onClick={() => setWindowState("minimized")} title="Minimize" style={{ background: "none", border: "1px solid var(--border-gold)", borderRadius: "6px", padding: "3px 8px", cursor: "pointer", color: "var(--text-muted)", fontSize: "13px" }}>─</button>
-          <button onClick={() => setWindowState(isMaximized ? "open" : "maximized")} title={isMaximized ? "Restore" : "Maximize"} style={{ background: "none", border: "1px solid var(--border-gold)", borderRadius: "6px", padding: "3px 8px", cursor: "pointer", color: "var(--text-muted)", fontSize: "11px" }}>{isMaximized ? "⊡" : "⊞"}</button>
-          <button onClick={onClose} title="Close" style={{ background: "rgba(217,48,37,0.1)", border: "1px solid rgba(217,48,37,0.3)", borderRadius: "6px", padding: "3px 8px", cursor: "pointer", color: "#e84234", fontSize: "13px" }}>✕</button>
+        <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
+          <div style={{
+            background: "rgba(212, 175, 55, 0.1)", border: "1px solid rgba(212, 175, 55, 0.2)",
+            borderRadius: "20px", padding: "4px 12px", display: "flex", alignItems: "center", gap: "8px"
+          }}>
+            <div style={{ width: "8px", height: "8px", borderRadius: "50%", background: "var(--gold-mid)" }} />
+            <span style={{ fontSize: "11px", color: "var(--gold-mid)", fontWeight: "600" }}>E2E Encrypted · IPFS Storage</span>
+          </div>
+          <button onClick={onClose} style={{ background: "var(--border-color)", border: "none", color: "var(--text-dim)", borderRadius: "4px", width: "24px", height: "24px", cursor: "pointer", fontSize: "12px" }}>X</button>
         </div>
       </div>
 
-      {/* ── Status banner ── */}
-      {status !== "idle" && (
-        <div style={{
-          display: "flex", alignItems: "center", gap: "10px",
-          padding: "8px 16px", flexShrink: 0,
-          fontSize: "12px", fontWeight: "500", fontFamily: "Raleway, sans-serif",
-          borderBottom: "1px solid var(--border-gold)",
-          background:
-            status === "sending" ? "rgba(212,160,23,0.08)" :
-            status === "success" && wasQueued ? "rgba(212,160,23,0.08)" :
-            status === "success" ? "rgba(76,175,110,0.10)" :
-            "rgba(217,48,37,0.10)",
-          color:
-            status === "sending" ? "var(--gold-mid)" :
-            status === "success" && wasQueued ? "var(--gold-mid)" :
-            status === "success" ? "#4caf6e" :
-            "#e84234",
-        }}>
-          {status === "sending" && (
-            <div style={{
-              width: "12px", height: "12px", flexShrink: 0,
-              border: "2px solid rgba(212,160,23,0.2)",
-              borderTop: "2px solid var(--gold-mid)",
-              borderRadius: "50%", animation: "spin 0.8s linear infinite",
-            }} />
-          )}
-          {status === "success" && !wasQueued && <span>✅</span>}
-          {status === "success" &&  wasQueued && <span>📴</span>}
-          {status === "error"   && <span>⚠️</span>}
-          <span style={{ flex: 1 }}>{statusMsg}</span>
-
-          {/* PoW progress bar during computation */}
-          {status === "sending" && powProgress > 0 && !powHash && (
-            <div style={{ display: "flex", alignItems: "center", gap: "6px", flexShrink: 0 }}>
-              <div style={{
-                width: "60px", height: "4px", borderRadius: "2px",
-                background: "rgba(212,160,23,0.2)", overflow: "hidden",
-              }}>
-                <div style={{
-                  height: "100%", borderRadius: "2px",
-                  background: "var(--gold-mid)",
-                  width: `${Math.min((powProgress / 8000) * 100, 95)}%`,
-                  transition: "width 0.3s ease",
-                }} />
+      {/* ── Fields ── */}
+      <div style={{ padding: "10px 24px", borderBottom: "1px solid var(--border-color)" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "20px", marginBottom: "12px" }}>
+          <span style={{ fontSize: "11px", fontWeight: "800", color: "var(--text-dim)", width: "60px" }}>TO</span>
+          <div style={{ flex: 1, display: "flex", flexWrap: "wrap", gap: "8px", alignItems: "center" }}>
+            {recipientEmail && recipientEmail.includes("@") && (
+              <div style={{ background: "rgba(212, 175, 55, 0.15)", color: "var(--gold-mid)", padding: "4px 12px", borderRadius: "4px", fontSize: "13px", fontWeight: "600" }}>
+                {recipientEmail}
               </div>
-            </div>
-          )}
-
-          {/* PoW success checkmark */}
-          {powHash && (
-            <span style={{
-              fontSize: "10px", padding: "2px 7px", borderRadius: "6px",
-              background: "rgba(76,175,110,0.1)", color: "#4caf6e",
-              border: "1px solid rgba(76,175,110,0.3)", flexShrink: 0,
-            }}>⛏️ PoW ✓</span>
-          )}
+            )}
+            <input
+              style={{ background: "none", border: "none", outline: "none", color: "var(--text-bright)", fontSize: "13px", flex: 1 }}
+              placeholder={!recipientEmail ? "recipient@dmail.com" : ""}
+              value={recipientEmail}
+              onChange={(e) => setRecipientEmail(e.target.value)}
+            />
+          </div>
         </div>
-      )}
-
-      {/* ── To field ── */}
-      <div style={{ display: "flex", alignItems: "center", borderBottom: "1px solid rgba(212,160,23,0.1)", padding: "0 16px", flexShrink: 0 }}>
-        <span style={{ fontSize: "12px", color: "var(--text-muted)", width: "40px", flexShrink: 0 }}>To</span>
-        <input
-          style={{ flex: 1, background: "none", border: "none", outline: "none", padding: "10px 0", fontSize: "13px", color: "var(--text-bright)", fontFamily: "Raleway, sans-serif" }}
-          placeholder="recipient@dmail.com"
-          value={recipientEmail}
-          onChange={(e) => { setRecipientEmail(e.target.value); setStatus("idle") }}
-          disabled={status === "sending"}
-        />
-        <div style={{
-          display: "flex", alignItems: "center", gap: "5px",
-          fontSize: "11px", fontWeight: "700", flexShrink: 0,
-          padding: "3px 8px", borderRadius: "6px",
-          background: encryptionReady === "ready" ? "rgba(76,175,110,0.1)" : encryptionReady === "no-key" ? "rgba(217,48,37,0.1)" : "rgba(212,160,23,0.08)",
-          color: encryptionReady === "ready" ? "#4caf6e" : encryptionReady === "no-key" ? "#e84234" : "var(--gold-mid)",
-          border: `1px solid ${encryptionReady === "ready" ? "rgba(76,175,110,0.3)" : encryptionReady === "no-key" ? "rgba(217,48,37,0.3)" : "rgba(212,160,23,0.2)"}`,
-        }}>
-          {encryptionReady === "ready"    && <>🔒 PGP Ready</>}
-          {encryptionReady === "no-key"   && <>⚠️ No Key</>}
-          {encryptionReady === "checking" && <>🔑 …</>}
-          
-          {typeof window !== "undefined" && !window.isSecureContext && (
-            <span style={{ 
-              marginLeft: "6px", padding: "1px 6px", borderRadius: "4px", 
-              background: "rgba(212,160,23,0.15)", color: "var(--gold-mid)",
-              fontSize: "10px", border: "1px solid rgba(212,160,23,0.3)"
-            }} title="HTTP Insecure Context: Software Fallback Enabled">
-              Software Mode
-            </span>
-          )}
+        <div style={{ display: "flex", alignItems: "center", gap: "20px", marginBottom: "12px" }}>
+          <span style={{ fontSize: "11px", fontWeight: "800", color: "var(--text-dim)", width: "60px" }}>CC</span>
+          <input style={{ flex: 1, background: "none", border: "none", outline: "none", color: "var(--text-bright)", fontSize: "13px" }} />
         </div>
       </div>
 
-      {/* ── Subject field ── */}
-      <div style={{ display: "flex", alignItems: "center", borderBottom: "1px solid rgba(212,160,23,0.1)", padding: "0 16px", flexShrink: 0 }}>
-        <span style={{ fontSize: "12px", color: "var(--text-muted)", width: "40px", flexShrink: 0 }}>Sub</span>
+      <div style={{ padding: "15px 24px", borderBottom: "1px solid var(--border-color)", display: "flex", alignItems: "center", gap: "20px" }}>
+        <span style={{ fontSize: "11px", fontWeight: "800", color: "var(--text-dim)", width: "60px" }}>SUBJECT</span>
         <input
-          style={{ flex: 1, background: "none", border: "none", outline: "none", padding: "10px 0", fontSize: "13px", color: "var(--text-bright)", fontFamily: "Raleway, sans-serif" }}
+          style={{ flex: 1, background: "none", border: "none", outline: "none", color: "var(--text-bright)", fontSize: "14px", fontWeight: "500" }}
           placeholder="Subject"
           value={subject}
-          onChange={(e) => { setSubject(e.target.value); setStatus("idle") }}
-          disabled={status === "sending"}
+          onChange={(e) => setSubject(e.target.value)}
         />
       </div>
 
-      {/* ── Message body ── */}
+      {/* ── Body ── */}
       <textarea
         style={{
           flex: 1, background: "none", border: "none", outline: "none",
-          padding: "14px 16px", fontSize: "13px", color: "var(--text-bright)",
-          fontFamily: "Georgia, serif", lineHeight: "1.7", resize: "none",
-          minHeight: isMaximized ? "auto" : "180px",
+          padding: "24px", fontSize: "15px", color: "var(--text-muted)",
+          lineHeight: "1.8", resize: "none"
         }}
-        placeholder="Write your encrypted message here..."
+        placeholder="Write your message..."
         value={message}
-        onChange={(e) => { setMessage(e.target.value); setStatus("idle") }}
-        disabled={status === "sending"}
+        onChange={(e) => setMessage(e.target.value)}
       />
 
       {/* ── Attachments chips ── */}
       {attachments.length > 0 && (
-        <div style={{ padding: "8px 16px", flexShrink: 0, borderTop: "1px solid rgba(212,160,23,0.1)", display: "flex", flexWrap: "wrap", gap: "6px" }}>
+        <div style={{ padding: "8px 24px", flexShrink: 0, borderTop: "1px solid var(--border-color)", display: "flex", flexWrap: "wrap", gap: "8px" }}>
           {attachments.map((att) => (
             <div key={att.id} style={{
-              display: "flex", alignItems: "center", gap: "6px",
-              padding: "4px 10px", borderRadius: "20px",
-              background: att.type === "ipfs" ? "rgba(76,175,110,0.1)" : "rgba(212,160,23,0.08)",
-              border: `1px solid ${att.type === "ipfs" ? "rgba(76,175,110,0.3)" : "rgba(212,160,23,0.2)"}`,
-              fontSize: "11px", color: att.type === "ipfs" ? "#4caf6e" : "var(--text-bright)",
+              display: "flex", alignItems: "center", gap: "8px",
+              padding: "4px 12px", borderRadius: "4px",
+              background: "var(--bg-input)", border: "1px solid var(--border-color)",
+              fontSize: "12px", color: "var(--text-muted)"
             }}>
-              <span>{att.type === "ipfs" ? "📦" : "📎"}</span>
-              <span style={{ maxWidth: "140px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{att.name}</span>
-              <span style={{ color: "var(--text-muted)", fontSize: "10px" }}>{att.size}</span>
-              <button onClick={() => removeAttachment(att.id)} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-muted)", fontSize: "12px", padding: "0" }}>✕</button>
+              {att.type === "ipfs" ? <Archive size={12} /> : <Paperclip size={12} />}
+              <span style={{ maxWidth: "200px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{att.name}</span>
+              <button onClick={() => removeAttachment(att.id)} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-dim)", display: "flex", alignItems: "center" }}><X size={12} /></button>
             </div>
           ))}
         </div>
@@ -562,150 +309,99 @@ export default function ComposeWindow({
 
       {/* ── IPFS CID input ── */}
       {showIpfsInput && (
-        <div style={{ padding: "8px 16px", flexShrink: 0, borderTop: "1px solid rgba(212,160,23,0.1)", display: "flex", gap: "8px", alignItems: "center" }}>
+        <div style={{ padding: "12px 24px", flexShrink: 0, borderTop: "1px solid var(--border-color)", display: "flex", gap: "10px", alignItems: "center", background: "var(--bg-input)" }}>
           <input
-            style={{ flex: 1, padding: "7px 12px", background: "var(--bg-panel)", border: "1px solid var(--border-gold)", borderRadius: "8px", color: "var(--text-bright)", fontFamily: "Courier New, monospace", fontSize: "11px", outline: "none" }}
-            placeholder="Paste IPFS CID (Qm... or bafy...)"
+            style={{ flex: 1, padding: "8px 12px", background: "var(--bg-card)", border: "1px solid var(--border-color)", borderRadius: "4px", color: "var(--text-bright)", fontSize: "12px", outline: "none" }}
+            placeholder="Paste IPFS CID (Qm...)"
             value={ipfsCid}
             onChange={(e) => setIpfsCid(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && handleIpfsAttach()}
             autoFocus
           />
-          <button onClick={handleIpfsAttach} style={{ padding: "7px 12px", borderRadius: "8px", cursor: "pointer", background: "none", border: "1px solid rgba(76,175,110,0.4)", color: "#4caf6e", fontSize: "11px", fontFamily: "Raleway, sans-serif" }}>Attach</button>
-          <button onClick={() => { setShowIpfsInput(false); setIpfsCid("") }} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-muted)", fontSize: "13px" }}>✕</button>
+          <button onClick={handleIpfsAttach} style={{ padding: "8px 16px", borderRadius: "4px", cursor: "pointer", background: "var(--gold-mid)", border: "none", color: "var(--bg-body)", fontSize: "11px", fontWeight: "700" }}>Attach</button>
+          <button onClick={() => { setShowIpfsInput(false); setIpfsCid("") }} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-dim)" }}><X size={18} /></button>
         </div>
       )}
 
       {/* ── Schedule picker ── */}
       {showSchedule && (
-        <div style={{ padding: "10px 16px", flexShrink: 0, borderTop: "1px solid rgba(212,160,23,0.1)", display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" }}>
-          <span style={{ fontSize: "11px", color: "var(--text-muted)" }}>⏰ Send at:</span>
+        <div style={{ padding: "12px 24px", flexShrink: 0, borderTop: "1px solid var(--border-color)", display: "flex", gap: "12px", alignItems: "center", flexWrap: "wrap", background: "var(--bg-input)" }}>
+          <span style={{ fontSize: "11px", color: "var(--text-dim)", fontWeight: "700" }}>SEND AT:</span>
           <input type="date" value={scheduleDate} onChange={(e) => setScheduleDate(e.target.value)} min={new Date().toISOString().split("T")[0]}
-            style={{ padding: "5px 10px", borderRadius: "6px", background: "var(--bg-panel)", border: "1px solid var(--border-gold)", color: "var(--text-bright)", fontSize: "11px", outline: "none" }}
+            style={{ padding: "6px 12px", borderRadius: "4px", background: "var(--bg-card)", border: "1px solid var(--border-color)", color: "var(--text-bright)", fontSize: "11px", outline: "none" }}
           />
           <input type="time" value={scheduleTime} onChange={(e) => setScheduleTime(e.target.value)}
-            style={{ padding: "5px 10px", borderRadius: "6px", background: "var(--bg-panel)", border: "1px solid var(--border-gold)", color: "var(--text-bright)", fontSize: "11px", outline: "none" }}
+            style={{ padding: "6px 12px", borderRadius: "4px", background: "var(--bg-card)", border: "1px solid var(--border-color)", color: "var(--text-bright)", fontSize: "11px", outline: "none" }}
           />
-          {scheduleDate && scheduleTime && (
-            <span style={{ fontSize: "11px", color: "#4caf6e" }}>✅ Scheduled for {scheduleDate} at {scheduleTime}</span>
-          )}
-          <button onClick={() => { setShowSchedule(false); setScheduleDate(""); setScheduleTime("") }} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-muted)", fontSize: "12px" }}>Clear ✕</button>
+          <button onClick={() => { setShowSchedule(false); setScheduleDate(""); setScheduleTime("") }} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--gold-mid)", fontSize: "11px", fontWeight: "700" }}>CLEAR</button>
         </div>
       )}
 
-      {/* ── Footer toolbar ── */}
-      <div style={{
-        display: "flex", alignItems: "center", gap: "8px",
-        padding: "10px 16px", flexShrink: 0,
-        borderTop: "1px solid var(--border-gold)",
-        background: "rgba(212,160,23,0.03)",
-      }}>
-        {/* Send */}
+      {/* ── Toolbar ── */}
+      <div style={{ padding: "20px 24px", background: "var(--bg-input)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <div style={{ display: "flex", gap: "10px" }}>
+          <button 
+            onClick={() => fileInputRef.current?.click()}
+            style={{ 
+              width: "36px", height: "36px", background: "var(--border-color)", border: "none", 
+              borderRadius: "4px", display: "flex", alignItems: "center", justifyContent: "center",
+              cursor: "pointer", color: "var(--text-dim)"
+            }}
+            title="Attach Local File"
+          >
+            <Paperclip size={18} />
+          </button>
+          <input ref={fileInputRef} type="file" multiple style={{ display: "none" }} onChange={handleFileAttach} />
+
+          <button 
+            onClick={() => setShowIpfsInput(!showIpfsInput)}
+            style={{ 
+              width: "36px", height: "36px", background: showIpfsInput ? "rgba(212, 175, 55, 0.1)" : "var(--border-color)", 
+              border: "none", borderRadius: "4px", display: "flex", alignItems: "center", justifyContent: "center",
+              cursor: "pointer", color: showIpfsInput ? "var(--gold-mid)" : "var(--text-dim)"
+            }}
+            title="Attach IPFS CID"
+          >
+            <Archive size={18} />
+          </button>
+
+          <button 
+            onClick={() => setShowSchedule(!showSchedule)}
+            style={{ 
+              width: "36px", height: "36px", background: showSchedule ? "rgba(212, 175, 55, 0.1)" : "var(--border-color)", 
+              border: "none", borderRadius: "4px", display: "flex", alignItems: "center", justifyContent: "center",
+              cursor: "pointer", color: showSchedule ? "var(--gold-mid)" : "var(--text-dim)"
+            }}
+            title="Schedule Send"
+          >
+            <Clock size={18} />
+          </button>
+
+          <div style={{ width: "1px", height: "36px", background: "var(--border-color)", margin: "0 5px" }} />
+          
+          <button style={{ 
+            width: "36px", height: "36px", background: "var(--border-color)", border: "none", 
+            borderRadius: "4px", display: "flex", alignItems: "center", justifyContent: "center",
+            cursor: "pointer", color: "var(--text-dim)"
+          }}>
+            <Lock size={18} />
+          </button>
+        </div>
+
         <button
           onClick={sendMail}
           disabled={status === "sending"}
           style={{
-            padding: "8px 20px",
-            background: "linear-gradient(135deg, var(--gold-rich), var(--gold-light))",
-            border: "none", borderRadius: "20px", cursor: "pointer",
-            fontSize: "12px", fontWeight: "800", color: "#000",
-            fontFamily: "Raleway, sans-serif",
-            boxShadow: "0 2px 10px rgba(212,160,23,0.3)",
-            opacity: status === "sending" ? 0.7 : 1,
-            display: "flex", alignItems: "center", gap: "6px",
+            background: "var(--gold-mid)", color: "var(--bg-body)", border: "none", 
+            padding: "12px 28px", borderRadius: "8px", fontWeight: "700",
+            fontSize: "14px", cursor: "pointer", display: "flex", alignItems: "center", gap: "10px",
+            boxShadow: "0 4px 15px rgba(212, 175, 55, 0.3)"
           }}
         >
-          {status === "sending" ? (
-            <>
-              <span style={{ display: "inline-block", width: "11px", height: "11px", border: "2px solid rgba(0,0,0,0.2)", borderTop: "2px solid #000", borderRadius: "50%", animation: "spin 0.8s linear infinite" }} />
-              Sending...
-            </>
-          ) : (
-            <>✉️ Send {scheduleDate ? "📅" : ""}</>
-          )}
+          <div style={{ width: 0, height: 0, borderTop: "6px solid transparent", borderBottom: "6px solid transparent", borderLeft: "10px solid var(--bg-body)" }} />
+          {status === "sending" ? "Sending..." : "Send Encrypted"}
         </button>
-
-        <div style={{ width: "1px", height: "20px", background: "var(--border-gold)" }} />
-
-        {/* Attach local file */}
-        <button
-          onClick={() => fileInputRef.current?.click()}
-          title="Attach File"
-          style={{ background: "none", border: "1px solid var(--border-gold)", borderRadius: "8px", padding: "6px 10px", cursor: "pointer", color: "var(--text-muted)", fontSize: "14px", transition: "all 0.15s" }}
-          onMouseEnter={(e) => { ;(e.currentTarget as HTMLButtonElement).style.color = "var(--gold-mid)"; ;(e.currentTarget as HTMLButtonElement).style.borderColor = "var(--gold-mid)" }}
-          onMouseLeave={(e) => { ;(e.currentTarget as HTMLButtonElement).style.color = "var(--text-muted)"; ;(e.currentTarget as HTMLButtonElement).style.borderColor = "var(--border-gold)" }}
-        >📎</button>
-
-        <input ref={fileInputRef} type="file" multiple style={{ display: "none" }} onChange={handleFileAttach} />
-
-        {/* Attach IPFS */}
-        <button
-          onClick={() => setShowIpfsInput(!showIpfsInput)}
-          title="Attach IPFS CID"
-          style={{ background: showIpfsInput ? "rgba(76,175,110,0.1)" : "none", border: `1px solid ${showIpfsInput ? "rgba(76,175,110,0.4)" : "var(--border-gold)"}`, borderRadius: "8px", padding: "6px 10px", cursor: "pointer", color: showIpfsInput ? "#4caf6e" : "var(--text-muted)", fontSize: "14px", transition: "all 0.15s" }}
-        >📦</button>
-
-        {/* Schedule */}
-        <button
-          onClick={() => setShowSchedule(!showSchedule)}
-          title="Schedule Send"
-          style={{ background: showSchedule ? "rgba(212,160,23,0.1)" : "none", border: `1px solid ${showSchedule ? "var(--gold-mid)" : "var(--border-gold)"}`, borderRadius: "8px", padding: "6px 10px", cursor: "pointer", color: showSchedule ? "var(--gold-mid)" : "var(--text-muted)", fontSize: "14px", transition: "all 0.15s" }}
-        >⏰</button>
-
-        {/* PoW info toggle */}
-        <button
-          onClick={() => setShowPowInfo(!showPowInfo)}
-          title="Proof-of-Work spam prevention"
-          style={{
-            background: showPowInfo ? "rgba(212,160,23,0.1)" : "none",
-            border: `1px solid ${showPowInfo ? "var(--gold-mid)" : "var(--border-gold)"}`,
-            borderRadius: "8px", padding: "6px 10px", cursor: "pointer",
-            color: showPowInfo ? "var(--gold-mid)" : "var(--text-muted)",
-            fontSize: "14px", transition: "all 0.15s",
-          }}
-        >⛏️</button>
-
-        {/* Footer encryption indicator */}
-        <div style={{
-          marginLeft: "auto", display: "flex", alignItems: "center", gap: "5px",
-          fontSize: "10px", fontWeight: "700", padding: "4px 10px", borderRadius: "8px",
-          background: encryptionReady === "ready" ? "rgba(76,175,110,0.1)" : encryptionReady === "no-key" ? "rgba(217,48,37,0.08)" : "rgba(212,160,23,0.08)",
-          border: `1px solid ${encryptionReady === "ready" ? "rgba(76,175,110,0.3)" : encryptionReady === "no-key" ? "rgba(217,48,37,0.25)" : "rgba(212,160,23,0.2)"}`,
-          color: encryptionReady === "ready" ? "#4caf6e" : encryptionReady === "no-key" ? "#e84234" : "var(--gold-mid)",
-        }}>
-          {encryptionReady === "ready"    && <>🔒 PGP · Global Network · PoW</>}
-          {encryptionReady === "no-key"   && <>⚠️ Recipient has no PGP key</>}
-          {encryptionReady === "checking" && <>🔑 Awaiting recipient...</>}
-        </div>
       </div>
-
-      {/* ── PoW info panel ── */}
-      {showPowInfo && (
-        <div style={{
-          padding: "12px 16px", flexShrink: 0,
-          borderTop: "1px solid var(--border-gold)",
-          background: "rgba(212,160,23,0.03)",
-        }}>
-          <div style={{ fontSize: "12px", fontWeight: "700", color: "var(--text-bright)", marginBottom: "6px" }}>
-            ⛏️ Proof-of-Work Spam Prevention
-          </div>
-          <div style={{ fontSize: "11px", color: "var(--text-muted)", lineHeight: "1.6" }}>
-            Before every send, your device computes a small SHA-256 puzzle (difficulty: 3 leading zeros).
-            This takes ~100ms for humans but makes mass spam computationally expensive.
-            The proof is stored with each mail so receivers can verify it.
-          </div>
-          {powHash && (
-            <div style={{
-              marginTop: "8px", padding: "6px 10px", borderRadius: "6px",
-              background: "rgba(76,175,110,0.06)", border: "1px solid rgba(76,175,110,0.2)",
-              fontFamily: "Courier New, monospace", fontSize: "9px",
-              color: "#4caf6e", wordBreak: "break-all",
-            }}>
-              Last hash: {powHash}
-            </div>
-          )}
-        </div>
-      )}
     </div>
   )
 }

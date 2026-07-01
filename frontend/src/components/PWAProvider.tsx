@@ -147,7 +147,7 @@ export default function PWAProvider({ children }: { children: React.ReactNode })
           position: "fixed", bottom: "80px", left: "16px", right: "16px",
           background: "var(--bg-card)", border: "1px solid var(--border-gold)",
           borderRadius: "14px", padding: "16px",
-          boxShadow: "0 8px 32px rgba(0,0,0,0.4)",
+          boxShadow: "var(--shadow-deep)",
           zIndex: 600, display: "flex", alignItems: "center", gap: "12px",
         }}>
           <div style={{
@@ -179,7 +179,7 @@ export default function PWAProvider({ children }: { children: React.ReactNode })
               style={{
                 background: "linear-gradient(135deg, var(--gold-rich), var(--gold-light))",
                 border: "none", borderRadius: "8px", padding: "6px 14px",
-                cursor: "pointer", fontSize: "11px", fontWeight: "700", color: "#000",
+                cursor: "pointer", fontSize: "11px", fontWeight: "700", color: "var(--bg-body)",
                 fontFamily: "Raleway, sans-serif",
               }}
             >{installing ? "Installing..." : "Install"}</button>
@@ -193,7 +193,7 @@ export default function PWAProvider({ children }: { children: React.ReactNode })
           position: "fixed", bottom: "80px", left: "16px", right: "16px",
           background: "var(--bg-card)", border: "1px solid var(--border-gold)",
           borderRadius: "14px", padding: "16px",
-          boxShadow: "0 8px 32px rgba(0,0,0,0.4)",
+          boxShadow: "var(--shadow-deep)",
           zIndex: 600,
         }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "10px" }}>
@@ -212,7 +212,7 @@ export default function PWAProvider({ children }: { children: React.ReactNode })
           </div>
           <div style={{
             marginTop: "10px", padding: "8px 12px", borderRadius: "8px",
-            background: "rgba(212,160,23,0.08)", border: "1px solid rgba(212,160,23,0.2)",
+            background: "rgba(212, 175, 55,0.08)", border: "1px solid rgba(212, 175, 55,0.2)",
             fontSize: "11px", color: "var(--gold-mid)",
           }}>
             💡 Works fully offline once installed
@@ -226,7 +226,7 @@ export default function PWAProvider({ children }: { children: React.ReactNode })
           position: "fixed", bottom: "80px", left: "16px", right: "16px",
           background: "var(--bg-card)", border: "1px solid var(--border-gold)",
           borderRadius: "14px", padding: "16px",
-          boxShadow: "0 8px 32px rgba(0,0,0,0.4)",
+          boxShadow: "var(--shadow-deep)",
           zIndex: 600, display: "flex", alignItems: "center", gap: "12px",
         }}>
           <div style={{

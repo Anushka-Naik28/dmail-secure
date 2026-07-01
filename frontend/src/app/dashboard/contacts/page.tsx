@@ -162,7 +162,7 @@ export default function ContactsPage() {
       setContacts(updated)
       // Save updated contacts
       const { saveContacts } = await import("@/utils/contacts")
-      await saveContacts(updated, user.email, user.publicKey)
+      await saveContacts(updated, user.email, user.publicKey, user.privateKey)
       // Update modal view
       setShowKeyModal((prev) => prev ? { ...prev, publicKey: key } : prev)
       setSuccessMsg("Public key refreshed!")
@@ -216,10 +216,10 @@ export default function ContactsPage() {
               padding: "8px 16px",
               background: "linear-gradient(135deg, var(--gold-rich), var(--gold-light))",
               border: "none", borderRadius: "20px", cursor: "pointer",
-              fontSize: "12px", fontWeight: "700", color: "#000",
+              fontSize: "12px", fontWeight: "700", color: "var(--bg-body)",
               fontFamily: "Raleway, sans-serif",
             }}
-          >+ Add Contact</button>
+          >Add Contact</button>
         }
       />
 
@@ -232,7 +232,7 @@ export default function ContactsPage() {
           fontSize: "12px", color: "var(--text-muted)",
           display: "flex", alignItems: "center", gap: "8px",
         }}>
-          🔐 Your contacts are <strong style={{ color: "var(--text-bright)" }}>PGP encrypted</strong> and
+          Lock Your contacts are <strong style={{ color: "var(--text-bright)" }}>PGP encrypted</strong> and
           stored on GunDB — only you can read them. Public keys are fetched automatically from the network.
         </div>
 
@@ -241,7 +241,7 @@ export default function ContactsPage() {
             background: "rgba(76,175,110,0.1)", border: "1px solid rgba(76,175,110,0.3)",
             borderRadius: "8px", padding: "10px 16px", marginBottom: "14px",
             fontSize: "12px", color: "#4caf6e",
-          }}>✅ {successMsg}</div>
+          }}>Check {successMsg}</div>
         )}
       </div>
 
@@ -249,20 +249,19 @@ export default function ContactsPage() {
         <div style={{ textAlign: "center", padding: "40px" }}>
           <div style={{
             width: "32px", height: "32px", margin: "0 auto 12px",
-            border: "3px solid rgba(212,160,23,0.2)", borderTop: "3px solid var(--gold-mid)",
+            border: "3px solid rgba(212, 175, 55,0.2)", borderTop: "3px solid var(--gold-mid)",
             borderRadius: "50%", animation: "spin 0.8s linear infinite",
           }} />
           <p style={{ color: "var(--text-muted)" }}>Decrypting contacts...</p>
         </div>
       ) : filteredContacts.length === 0 ? (
         <div style={{ textAlign: "center", padding: "40px" }}>
-          <div style={{ fontSize: "48px", marginBottom: "12px" }}>👥</div>
           <p className="empty-state">
             {searchQuery ? "No contacts found." : "No contacts yet. Add one or send a mail to auto-save contacts."}
           </p>
         </div>
       ) : (
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: "12px" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: "12px", padding: "0 20px" }}>
           {filteredContacts.map((contact) => (
             <div key={contact.id} style={{
               background: "var(--bg-card)", border: "1px solid var(--border-gold)",
@@ -305,7 +304,7 @@ export default function ContactsPage() {
                       width: "100%",
                     }}
                   >
-                    <span>🔑</span>
+                    <span>Key</span>
                     <span style={{ flex: 1, textAlign: "left" }}>PGP Key Available</span>
                     <span style={{
                       fontFamily: "Courier New, monospace", fontSize: "9px",
@@ -322,7 +321,7 @@ export default function ContactsPage() {
                     border: "1px solid rgba(217,48,37,0.15)",
                     color: "var(--text-muted)", fontSize: "10px",
                   }}>
-                    <span>⚠️</span>
+                    <span>Warning</span>
                     <span>No PGP key found</span>
                   </div>
                 )}
@@ -341,10 +340,10 @@ export default function ContactsPage() {
                     flex: 1, padding: "7px 0",
                     background: "linear-gradient(135deg, var(--gold-rich), var(--gold-light))",
                     border: "none", borderRadius: "8px", cursor: "pointer",
-                    fontSize: "11px", fontWeight: "700", color: "#000",
+                    fontSize: "11px", fontWeight: "700", color: "var(--bg-body)",
                     fontFamily: "Raleway, sans-serif",
                   }}
-                >✉️ Send Mail</button>
+                >Send Mail</button>
 
                 <button
                   onClick={() => setShowDeleteModal(contact)}
@@ -356,7 +355,7 @@ export default function ContactsPage() {
                     fontSize: "11px", color: "#e84234",
                     fontFamily: "Raleway, sans-serif",
                   }}
-                >🗑️</button>
+                >Delete</button>
               </div>
             </div>
           ))}
@@ -367,7 +366,6 @@ export default function ContactsPage() {
       {showKeyModal && (
         <div className="modal-overlay">
           <div className="modal-content" style={{ maxWidth: "480px" }}>
-            <div style={{ fontSize: "28px", marginBottom: "8px" }}>🔑</div>
             <h3>PGP Public Key</h3>
             <p style={{ fontSize: "13px", color: "var(--text-muted)", marginBottom: "16px" }}>
               {showKeyModal.name} · {showKeyModal.email}
@@ -393,7 +391,7 @@ export default function ContactsPage() {
                   fontSize: "11px", color: "#4caf6e",
                   display: "flex", alignItems: "center", gap: "8px",
                 }}>
-                  <span>🛡️</span>
+                  <span>Shield</span>
                   <span>RSA-2048 · OpenPGP · Verified on GunDB network</span>
                 </div>
 
@@ -402,12 +400,12 @@ export default function ContactsPage() {
                     onClick={() => handleCopyKey(showKeyModal.publicKey!)}
                     style={{
                       padding: "8px 14px", borderRadius: "8px", cursor: "pointer",
-                      background: copiedKey ? "rgba(76,175,110,0.15)" : "rgba(212,160,23,0.1)",
-                      border: `1px solid ${copiedKey ? "rgba(76,175,110,0.4)" : "rgba(212,160,23,0.3)"}`,
+                      background: copiedKey ? "rgba(76,175,110,0.15)" : "rgba(212, 175, 55,0.1)",
+                      border: `1px solid ${copiedKey ? "rgba(76,175,110,0.4)" : "rgba(212, 175, 55,0.3)"}`,
                       color: copiedKey ? "#4caf6e" : "var(--gold-mid)",
                       fontSize: "12px", fontFamily: "Raleway, sans-serif", fontWeight: "600",
                     }}
-                  >{copiedKey ? "✅ Copied!" : "📋 Copy Key"}</button>
+                  >{copiedKey ? "Check Copied!" : "Copy Key"}</button>
 
                   <button
                     onClick={() => handleRefreshKey(showKeyModal)}
@@ -418,7 +416,7 @@ export default function ContactsPage() {
                       color: "var(--text-muted)", fontSize: "12px",
                       fontFamily: "Raleway, sans-serif", opacity: fetchingKey ? 0.6 : 1,
                     }}
-                  >{fetchingKey ? "⏳ Refreshing..." : "🔄 Refresh Key"}</button>
+                  >{fetchingKey ? "Refreshing..." : "Refresh Key"}</button>
 
                   <button
                     onClick={() => {
@@ -437,12 +435,11 @@ export default function ContactsPage() {
                       color: "var(--text-muted)", fontSize: "12px",
                       fontFamily: "Raleway, sans-serif",
                     }}
-                  >⬇️ Download .asc</button>
+                  >Download .asc</button>
                 </div>
               </>
             ) : (
               <div style={{ textAlign: "center", padding: "20px 0" }}>
-                <div style={{ fontSize: "32px", marginBottom: "8px" }}>⚠️</div>
                 <p style={{ fontSize: "13px", color: "var(--text-muted)", marginBottom: "16px" }}>
                   No public key found for this contact. They may not be registered on SecureMail.
                 </p>
@@ -451,11 +448,11 @@ export default function ContactsPage() {
                   disabled={fetchingKey}
                   style={{
                     padding: "8px 16px", borderRadius: "8px", cursor: "pointer",
-                    background: "rgba(212,160,23,0.1)", border: "1px solid rgba(212,160,23,0.3)",
+                    background: "rgba(212, 175, 55,0.1)", border: "1px solid rgba(212, 175, 55,0.3)",
                     color: "var(--gold-mid)", fontSize: "12px",
                     fontFamily: "Raleway, sans-serif", fontWeight: "600",
                   }}
-                >{fetchingKey ? "⏳ Checking..." : "🔄 Check Network"}</button>
+                >{fetchingKey ? "Checking..." : "Check Network"}</button>
               </div>
             )}
 
@@ -469,47 +466,78 @@ export default function ContactsPage() {
         </div>
       )}
 
-      {/* ── Password unlock modal ── */}
+      {/* ── Password unlock modal (Standardized Vault Style) ── */}
       {showPassModal && (
         <div className="modal-overlay">
-          <div className="modal-content">
-            <div style={{ fontSize: "28px", marginBottom: "8px" }}>🔐</div>
-            <h3>Unlock Contacts</h3>
-            <p style={{ fontSize: "13px", color: "var(--text-muted)" }}>
-              Enter your password to decrypt your contacts.
-            </p>
-            {passError && (
-              <div style={{
-                padding: "8px 12px", borderRadius: "8px",
-                marginTop: "10px", marginBottom: "4px", fontSize: "13px",
-                background: "rgba(217,48,37,0.1)", color: "#e84234",
-                border: "1px solid rgba(217,48,37,0.25)",
-              }}>⚠️ {passError}</div>
-            )}
-            <input
-              type="password" className="auth-input" placeholder="Your password"
-              value={passInput}
-              onChange={(e) => { setPassInput(e.target.value); setPassError("") }}
-              onKeyDown={(e) => e.key === "Enter" && !unlocking && handleUnlock()}
-              autoFocus disabled={unlocking}
-            />
-            <div className="modal-actions">
-              <button className="btn-secondary" onClick={() => router.push("/dashboard/inbox")} disabled={unlocking}>
-                Cancel
-              </button>
-              <button className="btn" onClick={handleUnlock} disabled={unlocking} style={{ opacity: unlocking ? 0.7 : 1 }}>
-                {unlocking ? (
-                  <>
-                    <span style={{
-                      display: "inline-block", width: "12px", height: "12px",
-                      border: "2px solid rgba(255,255,255,0.3)", borderTop: "2px solid #fff",
-                      borderRadius: "50%", animation: "spin 0.8s linear infinite",
-                      marginRight: "8px", verticalAlign: "middle",
-                    }} />
-                    Decrypting...
-                  </>
-                ) : "Unlock 🔓"}
-              </button>
+          <div className="modal-content" style={{ padding: "0", background: "transparent", border: "none" }}>
+            <div style={{ textAlign: "center" }}>
+              <div style={{ 
+                background: "var(--bg-card)", 
+                borderRadius: "20px", 
+                padding: "40px", 
+                border: "1px dashed var(--border-gold)",
+                boxShadow: "var(--shadow-deep)"
+              }}>
+                <h3 style={{ color: "var(--text-bright)", marginBottom: "12px", fontSize: "20px" }}>Secure Vault</h3>
+                <p style={{ color: "var(--text-muted)", fontSize: "14px", marginBottom: "24px" }}>
+                  Enter your Vault Passphrase to decrypt your contacts
+                </p>
+                
+                {passError && (
+                  <div style={{
+                    padding: "10px 14px", borderRadius: "8px",
+                    marginBottom: "16px", fontSize: "13px",
+                    background: "rgba(217,48,37,0.1)", color: "#e84234",
+                    border: "1px solid rgba(217,48,37,0.25)",
+                    textAlign: "center"
+                  }}>Warning {passError}</div>
+                )}
+
+                <input
+                  type="password"
+                  placeholder="Vault Passphrase"
+                  value={passInput}
+                  onChange={(e) => { setPassInput(e.target.value); setPassError("") }}
+                  onKeyDown={(e) => e.key === "Enter" && !unlocking && handleUnlock()}
+                  style={{ 
+                    width: "100%", background: "var(--mail-row-border)", border: "1px solid #1F1F1F", 
+                    borderRadius: "8px", padding: "14px 16px", color: "var(--text-bright)", 
+                    fontSize: "14px", outline: "none", textAlign: "center", marginBottom: "16px" 
+                  }}
+                  autoFocus
+                  disabled={unlocking}
+                />
+
+                <div style={{ display: "flex", gap: "12px" }}>
+                  <button 
+                    className="btn-secondary" 
+                    onClick={() => router.push("/dashboard/inbox")} 
+                    disabled={unlocking}
+                    style={{ flex: 1, padding: "12px" }}
+                  >
+                    Cancel
+                  </button>
+                  <button 
+                    onClick={handleUnlock} 
+                    disabled={unlocking} 
+                    style={{ 
+                      flex: 1, background: "linear-gradient(135deg, var(--gold-rich), var(--gold-light))", 
+                      color: "var(--bg-body)", border: "none", borderRadius: "8px", 
+                      padding: "12px", fontWeight: "700", cursor: "pointer",
+                      opacity: unlocking ? 0.7 : 1, display: "flex", alignItems: "center", justifyContent: "center", gap: "8px"
+                    }}
+                  >
+                    {unlocking && (
+                      <span style={{
+                        display: "inline-block", width: "12px", height: "12px",
+                        border: "2px solid rgba(0,0,0,0.3)", borderTop: "2px solid #000",
+                        borderRadius: "50%", animation: "spin 0.8s linear infinite",
+                      }} />
+                    )}
+                    {unlocking ? "Unlocking..." : "Unlock Vault"}
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -519,7 +547,6 @@ export default function ContactsPage() {
       {showAddModal && (
         <div className="modal-overlay">
           <div className="modal-content">
-            <div style={{ fontSize: "28px", marginBottom: "8px" }}>👤</div>
             <h3>Add Contact</h3>
             {addError && (
               <div style={{
@@ -527,7 +554,7 @@ export default function ContactsPage() {
                 marginTop: "8px", marginBottom: "4px", fontSize: "13px",
                 background: "rgba(217,48,37,0.1)", color: "#e84234",
                 border: "1px solid rgba(217,48,37,0.25)",
-              }}>⚠️ {addError}</div>
+              }}>Warning {addError}</div>
             )}
             <input
               type="text" className="auth-input" placeholder="Full name"
@@ -550,12 +577,12 @@ export default function ContactsPage() {
                 marginTop: "10px", padding: "8px 12px", borderRadius: "8px",
                 fontSize: "11px",
                 background: keyFetching
-                  ? "rgba(212,160,23,0.06)"
+                  ? "rgba(212, 175, 55,0.06)"
                   : keyPreview
                   ? "rgba(76,175,110,0.06)"
                   : "rgba(217,48,37,0.05)",
                 border: `1px solid ${keyFetching
-                  ? "rgba(212,160,23,0.2)"
+                  ? "rgba(212, 175, 55,0.2)"
                   : keyPreview
                   ? "rgba(76,175,110,0.25)"
                   : "rgba(217,48,37,0.15)"}`,
@@ -568,13 +595,13 @@ export default function ContactsPage() {
                 {keyFetching && (
                   <span style={{
                     display: "inline-block", width: "10px", height: "10px",
-                    border: "2px solid rgba(212,160,23,0.3)", borderTop: "2px solid var(--gold-mid)",
+                    border: "2px solid rgba(212, 175, 55,0.3)", borderTop: "2px solid var(--gold-mid)",
                     borderRadius: "50%", animation: "spin 0.8s linear infinite",
                   }} />
                 )}
                 {keyFetching && "Looking up PGP key..."}
-                {!keyFetching && keyPreview && "🔑 PGP key found — will be saved automatically"}
-                {!keyFetching && !keyPreview && newEmail.includes("@") && "⚠️ No PGP key found — contact may not be on SecureMail"}
+                {!keyFetching && keyPreview && "PGP key found — will be saved automatically"}
+                {!keyFetching && !keyPreview && newEmail.includes("@") && "No PGP key found — contact may not be on SecureMail"}
               </div>
             )}
 
@@ -585,17 +612,7 @@ export default function ContactsPage() {
                 disabled={adding}
               >Cancel</button>
               <button className="btn" onClick={() => handleAddContact()} disabled={adding} style={{ opacity: adding ? 0.7 : 1 }}>
-                {adding ? (
-                  <>
-                    <span style={{
-                      display: "inline-block", width: "12px", height: "12px",
-                      border: "2px solid rgba(255,255,255,0.3)", borderTop: "2px solid #fff",
-                      borderRadius: "50%", animation: "spin 0.8s linear infinite",
-                      marginRight: "8px", verticalAlign: "middle",
-                    }} />
-                    Saving...
-                  </>
-                ) : "Add Contact"}
+                {adding ? "Saving..." : "Add Contact"}
               </button>
             </div>
           </div>
@@ -606,7 +623,6 @@ export default function ContactsPage() {
       {showDeleteModal && (
         <div className="modal-overlay">
           <div className="modal-content">
-            <div style={{ fontSize: "28px", marginBottom: "8px" }}>🗑️</div>
             <h3>Delete Contact</h3>
             <p style={{ fontSize: "13px", color: "var(--text-muted)" }}>
               Remove <strong style={{ color: "var(--text-bright)" }}>{showDeleteModal.name}</strong> from your contacts?

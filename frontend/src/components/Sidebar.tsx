@@ -3,10 +3,10 @@
 import {
   Inbox, Send, FileText, AlertTriangle, Trash2,
   Star, Mail, Archive, Users, Settings,
-  PenSquare, Database, LogOut, Tag, Plus, ChevronDown, Globe
+  PenSquare, Database, LogOut, Tag, Plus, ChevronDown, Globe, UserPlus
 } from "lucide-react"
 
-import { useEffect, useState } from "react"
+import { useEffect, useState, memo } from "react"
 import Link from "next/link"
 import Image from "next/image" // 1. Added Image import
 import { usePathname, useRouter } from "next/navigation"
@@ -21,11 +21,11 @@ interface SidebarProps {
   onCompose: () => void
 }
 
-export default function Sidebar({ isOpen, onCompose }: SidebarProps) {
+function Sidebar({ isOpen, onCompose }: SidebarProps) {
   const pathname = usePathname()
   const router = useRouter()
 
-  const [counts, setCounts] = useState({ inbox: 0, starred: 0, spam: 0, drafts: 0, request: 0 })
+  const [counts, setCounts] = useState({ inbox: 0, starred: 0, spam: 0, drafts: 0, request: 0, sent: 0 })
   const [showLogoutModal, setShowLogoutModal] = useState(false)
   const [userName, setUserName] = useState("")
   const [userEmail, setUserEmail] = useState("")
@@ -43,18 +43,29 @@ export default function Sidebar({ isOpen, onCompose }: SidebarProps) {
     setCounts(getCounts(user.email))
     setLabels(getLabels(user.email))
 
+    let throttleTimer: NodeJS.Timeout | null = null
+    const throttledUpdate = () => {
+      if (throttleTimer) return
+      throttleTimer = setTimeout(() => {
+        setCounts(getCounts(user.email))
+        setLabels(getLabels(user.email))
+        throttleTimer = null
+      }, 500) // Update sidebar counts at most once every 500ms
+    }
+
     const onStorage = () => {
       const u = JSON.parse(localStorage.getItem("user") || "{}")
       if (u.email) setLabels(getLabels(u.email))
     }
     window.addEventListener("storage", onStorage)
 
-    const unsub = subscribe(() => setCounts(getCounts(user.email)))
-    const unsubLabel = subscribeLabelStore(() => setLabels(getLabels(user.email)))
+    const unsub = subscribe(throttledUpdate)
+    const unsubLabel = subscribeLabelStore(throttledUpdate)
 
     return () => {
       unsub();
       unsubLabel();
+      if (throttleTimer) clearTimeout(throttleTimer)
       window.removeEventListener("storage", onStorage)
     }
   }, [])
@@ -80,10 +91,10 @@ export default function Sidebar({ isOpen, onCompose }: SidebarProps) {
           <div style={{ padding: "8px 16px 20px" }}>
             <button onClick={onCompose} className="compose-btn" style={{ 
               width: "100%", padding: "12px 24px", borderRadius: "16px",
-              boxShadow: "0 1px 3px rgba(0,0,0,0.2), 0 4px 12px rgba(212,160,23,0.15)"
+              boxShadow: "var(--shadow-deep)"
             }}>
-              <Plus size={24} style={{ color: "#000" }} />
-              <span style={{ fontSize: "14px", fontWeight: "700", color: "#000" }}>Compose</span>
+              <Plus size={24} style={{ color: "var(--bg-body)" }} />
+              <span style={{ fontSize: "14px", fontWeight: "700", color: "var(--bg-body)" }}>Compose</span>
             </button>
           </div>
 
@@ -98,8 +109,8 @@ export default function Sidebar({ isOpen, onCompose }: SidebarProps) {
                 {counts.inbox > 0 && (
                   <span className="count-badge" style={{ 
                     fontSize: "11px", fontWeight: "700",
-                    background: isActive("inbox") ? "var(--gold-mid)" : "rgba(212,160,23,0.1)",
-                    color: isActive("inbox") ? "#000" : "var(--gold-mid)",
+                    background: isActive("inbox") ? "var(--gold-mid)" : "rgba(212, 175, 55,0.1)",
+                    color: isActive("inbox") ? "var(--bg-body)" : "var(--gold-mid)",
                     padding: "2px 8px", borderRadius: "10px"
                   }}>{counts.inbox}</span>
                 )}
@@ -114,7 +125,7 @@ export default function Sidebar({ isOpen, onCompose }: SidebarProps) {
                 {counts.starred > 0 && (
                   <span className="count-badge" style={{ 
                     fontSize: "11px", fontWeight: "700",
-                    background: "rgba(212,160,23,0.1)", color: "var(--gold-mid)",
+                    background: "rgba(212, 175, 55,0.1)", color: "var(--gold-mid)",
                     padding: "2px 8px", borderRadius: "10px"
                   }}>{counts.starred}</span>
                 )}
@@ -126,6 +137,13 @@ export default function Sidebar({ isOpen, onCompose }: SidebarProps) {
               <div style={{ display: "flex", alignItems: "center", width: "100%", gap: "12px" }}>
                 <Send size={20} style={{ opacity: isActive("sent") ? 1 : 0.7 }} />
                 <span style={{ flex: 1, fontSize: "14px" }}>Sent</span>
+                {counts.sent > 0 && (
+                  <span className="count-badge" style={{ 
+                    fontSize: "11px", fontWeight: "700",
+                    background: "rgba(212, 175, 55,0.1)", color: "var(--gold-mid)",
+                    padding: "2px 8px", borderRadius: "10px"
+                  }}>{counts.sent}</span>
+                )}
               </div>
             </Link>
 
@@ -137,9 +155,24 @@ export default function Sidebar({ isOpen, onCompose }: SidebarProps) {
                 {counts.drafts > 0 && (
                   <span className="count-badge" style={{ 
                     fontSize: "11px", fontWeight: "700",
-                    background: "rgba(212,160,23,0.1)", color: "var(--gold-mid)",
+                    background: "rgba(212, 175, 55,0.1)", color: "var(--gold-mid)",
                     padding: "2px 8px", borderRadius: "10px"
                   }}>{counts.drafts}</span>
+                )}
+              </div>
+            </Link>
+
+            {/* Requests */}
+            <Link href="/dashboard/requests" className={`menu-link ${isActive("requests") ? "active" : ""}`}>
+              <div style={{ display: "flex", alignItems: "center", width: "100%", gap: "12px" }}>
+                <UserPlus size={20} style={{ opacity: isActive("requests") ? 1 : 0.7 }} />
+                <span style={{ flex: 1, fontSize: "14px" }}>Requests</span>
+                {counts.request > 0 && (
+                  <span className="count-badge" style={{
+                    fontSize: "11px", fontWeight: "700",
+                    background: "rgba(212, 175, 55, 0.15)", color: "var(--gold-mid)",
+                    padding: "2px 8px", borderRadius: "10px"
+                  }}>{counts.request}</span>
                 )}
               </div>
             </Link>
@@ -160,29 +193,20 @@ export default function Sidebar({ isOpen, onCompose }: SidebarProps) {
               </div>
             </Link>
 
-            {/* Spam + Request combined badge */}
+            {/* Spam */}
             <Link href="/dashboard/spam" className={`menu-link ${isActive("spam") ? "active" : ""}`}>
               <div style={{ display: "flex", alignItems: "center", width: "100%", gap: "12px" }}>
                 <AlertTriangle size={20} style={{ opacity: isActive("spam") ? 1 : 0.7 }} />
                 <span style={{ flex: 1, fontSize: "14px" }}>Spam</span>
-                <div style={{ display: "flex", gap: "4px", alignItems: "center" }}>
-                  {counts.spam > 0 && (
-                    <span className="count-badge" style={{
-                      background: "rgba(217,48,37,0.15)", color: "#e84234",
-                      fontSize: "11px", padding: "2px 8px", borderRadius: "10px", fontWeight: "700"
-                    }}>
-                      {counts.spam}
-                    </span>
-                  )}
-                  {counts.request > 0 && (
-                    <span className="count-badge" style={{
-                      background: "rgba(212,160,23,0.15)", color: "var(--gold-mid)",
-                      fontSize: "11px", padding: "2px 8px", borderRadius: "10px", fontWeight: "700"
-                    }}>
-                      {counts.request}
-                    </span>
-                  )}
-                </div>
+                {counts.spam > 0 && (
+                  <span className="count-badge" style={{
+                    background: "#d93025", color: "#fff",
+                    fontSize: "11px", padding: "2px 10px", borderRadius: "12px",
+                    fontWeight: "800", boxShadow: "0 2px 8px rgba(217, 48, 37, 0.3)"
+                  }}>
+                    {counts.spam}
+                  </span>
+                )}
               </div>
             </Link>
 
@@ -267,12 +291,6 @@ export default function Sidebar({ isOpen, onCompose }: SidebarProps) {
             <div className="nav-divider" />
             <div className="nav-section-label">More</div>
 
-            {/* Global Discovery */}
-            <Link href="/dashboard/global-chat" className={`menu-link ${isActive("global-chat") ? "active" : ""}`}>
-              <span style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-                <Globe size={18} /> Global Discovery
-              </span>
-            </Link>
 
             {/* IPFS */}
             <Link href="/dashboard/ipfs" className={`menu-link ${isActive("ipfs") ? "active" : ""}`}>
@@ -295,6 +313,7 @@ export default function Sidebar({ isOpen, onCompose }: SidebarProps) {
               </span>
             </Link>
           </nav>
+
         </div>
 
         {/* Network status */}
@@ -345,3 +364,5 @@ export default function Sidebar({ isOpen, onCompose }: SidebarProps) {
     </>
   )
 }
+
+export default memo(Sidebar)

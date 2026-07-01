@@ -95,6 +95,11 @@ export const filterIncomingMail = async (
   userEmail: string
 ): Promise<FilterDecision> => {
 
+  // ── Step 0: Ignore outgoing mails ──
+  if (mail.senderEmail?.toLowerCase() === userEmail?.toLowerCase()) {
+    return { status: "inbox", flaggedReason: "", spamScore: 0 }
+  }
+
   // ── Step 1: Trusted sender (in contacts) → always inbox ──
   const trusted = isTrustedSender(mail.senderEmail, userEmail)
   if (trusted) {

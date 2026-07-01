@@ -5,29 +5,22 @@ import { useEffect, useState } from "react"
 export default function OutboxPage() {
   const [mails, setMails] = useState<any[]>([])
 
-  const loadOutbox = () => {
-    const user = JSON.parse(localStorage.getItem("user") || "{}")
-    const allMails = JSON.parse(localStorage.getItem("mails") || "[]")
-    
-    // Filter: Mails sent by me that are still marked as 'outbox' or 'pending'
-    const pending = allMails.filter((m: any) => 
-      m.senderEmail === user.email && (m.status === 'outbox' || m.isPending === true)
-    )
-    setMails(pending)
-  }
-
   useEffect(() => {
-    loadOutbox()
-    // Optional: Refresh every few seconds to simulate sending progress
-    const interval = setInterval(loadOutbox, 3000)
-    return () => clearInterval(interval)
+    if (typeof window === "undefined") return
+    const { getMails, subscribe } = require("@/utils/mailStore")
+    
+    const load = () => {
+      setMails(getMails("outbox"))
+    }
+
+    load()
+    const unsub = subscribe(load)
+    return () => unsub()
   }, [])
 
-  const cancelSending = (mailTime: string) => {
-    const allMails = JSON.parse(localStorage.getItem("mails") || "[]")
-    const updated = allMails.filter((m: any) => m.time !== mailTime)
-    localStorage.setItem("mails", JSON.stringify(updated))
-    loadOutbox()
+  const cancelSending = (id: string) => {
+    const { updateMailInStore } = require("@/utils/mailStore")
+    updateMailInStore(id, { status: "trash", isPending: false })
   }
 
   return (
@@ -57,7 +50,7 @@ export default function OutboxPage() {
               <div className="mail-actions-persistent">
                 <button 
                   className="action-link delete-forever" 
-                  onClick={() => cancelSending(mail.time)}
+                  onClick={() => cancelSending(mail.id)}
                 >
                   Cancel
                 </button>

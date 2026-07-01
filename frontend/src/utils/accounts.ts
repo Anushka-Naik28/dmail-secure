@@ -1,11 +1,15 @@
 export interface SavedAccount {
-  email:      string
-  name:       string
-  password:   string
-  publicKey:  string
-  privateKey: string
-  addedAt:    number
-  avatar?:    string 
+  email:           string
+  name:            string
+  password:        string
+  publicKey:       string
+  privateKey:      string
+  fastPublicKey?:  string
+  fastPrivateKey?: string
+  addedAt:         number
+  avatar?:         string 
+  did?:            string
+  isDeterministic?: boolean
 }
 
 const ACCOUNTS_KEY = "securemail_accounts"
@@ -21,14 +25,9 @@ export const getSavedAccounts = (): SavedAccount[] => {
 }
 
 export const saveAccount = (user: SavedAccount): void => {
-  const accounts  = getSavedAccounts()
-  const existing  = accounts.findIndex((a) => a.email === user.email)
-  if (existing >= 0) {
-    accounts[existing] = { ...accounts[existing], ...user }
-  } else {
-    accounts.push(user)
-  }
-  localStorage.setItem(ACCOUNTS_KEY, JSON.stringify(accounts))
+  // 🛡️ [Security Layer] Only allow one account to be saved on this device.
+  // Overwrites any previous accounts to ensure a clean, single-identity state.
+  localStorage.setItem(ACCOUNTS_KEY, JSON.stringify([user]))
 }
 
 export const removeAccount = (email: string): void => {
@@ -38,6 +37,7 @@ export const removeAccount = (email: string): void => {
 
 export const logout = (): void => {
   localStorage.removeItem(CURRENT_USER_KEY)
+  localStorage.removeItem(ACCOUNTS_KEY)
 }
 
 export const switchAccount = (account: SavedAccount): void => {

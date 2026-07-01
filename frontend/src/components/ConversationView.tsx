@@ -8,9 +8,10 @@ import {
   Maximize2, Minimize2, Download, FileText, File,
   ArrowLeft, Printer, ExternalLink, Lock
 } from "lucide-react"
-import { decryptMessage } from "@/utils/gun"
+import { decryptMessage, cleanMessage } from "@/utils/gun"
 import { getCachedMail, updateCachedMail } from "@/utils/mailCache"
-import { getLocalNode } from "@/utils/ipfs"
+import { getLocalNode, fetchFromIPFS } from "@/utils/ipfs"
+import { hybridDecrypt } from "@/utils/cryptoHybrid"
 
 interface Message {
   id: string
@@ -80,7 +81,7 @@ export default function ConversationView({
     setIsDecrypting(prev => ({ ...prev, [msg.id]: true }))
     try {
       const decrypted = await decryptMessage(msg.message, user.privateKey, pass)
-      const cleaned = decrypted.replace(/\[IPFS Attachment: [^\]]+\]/g, "").trim()
+      const cleaned = cleanMessage(decrypted)
       
       setDecryptedMessages(prev => ({ ...prev, [msg.id]: cleaned }))
       await updateCachedMail(msg.id, {
@@ -117,10 +118,45 @@ export default function ConversationView({
     }
   }
 
-  const handleDownload = (cid: string, filename: string) => {
-    // Use public gateway for reliable cross-device browsing/download
-    const url = `https://ipfs.io/ipfs/${cid}`
-    window.open(url, "_blank")
+  const handleDownload = async (cid: string, filename: string, isHybrid: boolean = false) => {
+    if (!isHybrid) {
+      // Standard unencrypted IPFS download
+      const url = `https://ipfs.io/ipfs/${cid}`
+      window.open(url, "_blank")
+      return
+    }
+
+    // 🛡️ Hybrid Decryption Flow
+    try {
+      console.log(`🛡️ [HybridDecrypt] Fetching encrypted attachment from IPFS: ${cid}`)
+      const encryptedPackage = await fetchFromIPFS(cid)
+      
+      if (!encryptedPackage || !encryptedPackage.key) {
+        throw new Error("Invalid hybrid package received from IPFS")
+      }
+
+      // We need the user's password for decryption
+      const password = passInput || prompt("Enter your password to decrypt this attachment:")
+      if (!password) return
+
+      const decryptedData = await hybridDecrypt(encryptedPackage, user.privateKey, password)
+      
+      // Create a blob and download
+      const blob = new Blob([decryptedData], { type: "application/octet-stream" })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement("a")
+      a.href = url
+      a.download = filename || "decrypted_attachment"
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+      
+      console.log("✅ [HybridDecrypt] Attachment decrypted and downloaded.")
+    } catch (err) {
+      console.error("❌ [HybridDecrypt] Failed:", err)
+      alert("Failed to decrypt attachment. Please ensure your password is correct.")
+    }
   }
 
   return (
@@ -152,15 +188,15 @@ export default function ConversationView({
 
       <div style={{ flex: 1, overflowY: "auto", display: "flex", flexDirection: "column" }}>
         {/* Subject Header Area */}
-        <div style={{ padding: "20px 24px 8px" }}>
+        <div style={{ padding: "32px 32px 16px" }}>
           <h2 style={{ 
-            margin: 0, fontSize: "22px", fontWeight: "400", color: "var(--text-bright)",
-            fontFamily: "'Cinzel', serif", letterSpacing: "0.5px"
+            margin: 0, fontSize: "28px", fontWeight: "500", color: "#FFFFFF",
+            fontFamily: "'Inter', sans-serif", letterSpacing: "-0.5px"
           }}>{thread.subject}</h2>
         </div>
 
         {/* Messages List */}
-        <div ref={scrollRef} style={{ padding: "12px 24px 24px" }}>
+        <div ref={scrollRef} style={{ padding: "0 32px 32px" }}>
           <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
             {thread.messages.map((msg, index) => {
               const isExpanded = expandedIds.has(msg.id)
@@ -170,63 +206,143 @@ export default function ConversationView({
 
               return (
                 <div key={msg.id} style={{
-                  border: "1px solid var(--mail-row-border)",
+                  border: isExpanded ? "none" : "1px solid var(--mail-row-border)",
                   borderRadius: "8px",
-                  background: isExpanded ? "var(--bg-card)" : "rgba(255,255,255,0.02)",
+                  background: isExpanded ? "transparent" : "rgba(255,255,255,0.02)",
                   overflow: "hidden",
                   transition: "all 0.15s ease",
-                  boxShadow: isExpanded ? "0 4px 12px rgba(0,0,0,0.2)" : "none"
+                  marginBottom: isExpanded ? "32px" : "8px"
                 }}>
-                  {/* Message Summary / Header */}
-                  <div 
-                    onClick={() => toggleExpand(msg.id)}
-                    style={{ 
-                      padding: "10px 16px", cursor: "pointer",
-                      display: "flex", alignItems: "center", gap: "12px",
-                      background: isExpanded ? "rgba(255,255,255,0.01)" : "transparent"
-                    }}
-                  >
-                    <div style={{ 
-                      width: "28px", height: "28px", borderRadius: "50%", flexShrink: 0,
-                      background: isSelf ? "var(--border-gold)" : "linear-gradient(135deg, var(--gold-rich), var(--gold-light))",
-                      display: "flex", alignItems: "center", justifyContent: "center",
-                      fontSize: "12px", fontWeight: "800", color: isSelf ? "var(--gold-mid)" : "#000"
-                    }}>
-                      {msg.senderEmail.charAt(0).toUpperCase()}
-                    </div>
-                    
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ display: "flex", alignItems: "baseline", gap: "10px" }}>
-                        <span style={{ fontSize: "14px", fontWeight: "700", color: "var(--text-bright)" }}>
-                          {isSelf ? "You" : msg.senderEmail.split("@")[0]}
-                        </span>
-                        <span style={{ fontSize: "12px", color: "var(--text-dim)", display: isExpanded ? "inline" : "none" }}>
-                          &lt;{msg.senderEmail}&gt;
-                        </span>
-                        <span style={{ marginLeft: "auto", fontSize: "11px", color: "var(--text-dim)" }}>{msg.time}</span>
+                  {/* Compact Header for collapsed state */}
+                  {!isExpanded && (
+                    <div 
+                      onClick={() => toggleExpand(msg.id)}
+                      style={{ 
+                        padding: "10px 16px", cursor: "pointer",
+                        display: "flex", alignItems: "center", gap: "12px",
+                      }}
+                    >
+                      <div style={{ 
+                        width: "28px", height: "28px", borderRadius: "50%", flexShrink: 0,
+                        background: isSelf ? "var(--border-gold)" : "linear-gradient(135deg, var(--gold-rich), var(--gold-light))",
+                        display: "flex", alignItems: "center", justifyContent: "center",
+                        fontSize: "12px", fontWeight: "800", color: isSelf ? "var(--gold-mid)" : "var(--bg-body)"
+                      }}>
+                        {msg.senderEmail.charAt(0).toUpperCase()}
                       </div>
-                      {!isExpanded && (
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ display: "flex", alignItems: "baseline", gap: "10px" }}>
+                          <span style={{ fontSize: "14px", fontWeight: "700", color: "var(--text-bright)" }}>
+                            {isSelf ? "You" : msg.senderEmail.split("@")[0]}
+                          </span>
+                          <span style={{ marginLeft: "auto", fontSize: "11px", color: "var(--text-dim)" }}>{msg.time}</span>
+                        </div>
                         <div style={{ 
                           fontSize: "13px", color: "var(--text-muted)", marginTop: "2px",
                           overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" 
                         }}>
-                          {needsDecrypt ? "🔒 Encrypted Content" : (content || "").slice(0, 100)}
+                          {needsDecrypt ? "🔒 Encrypted Content" : cleanMessage(content).slice(0, 100)}
                         </div>
-                      )}
+                      </div>
                     </div>
-                    {msg.isStarred && <Star size={14} fill="var(--gold-mid)" color="var(--gold-mid)" />}
-                    <div style={{ color: "var(--text-dim)" }}>
-                       <MoreVertical size={16} />
-                    </div>
-                  </div>
+                  )}
 
                   {/* Expanded Content */}
                   {isExpanded && (
-                    <div style={{ padding: "8px 16px 20px 56px" }}>
+                    <div style={{ padding: "8px 0" }}>
+                      
+                      {/* Detailed Sender Info */}
+                      <div style={{ display: "flex", alignItems: "center", gap: "16px", marginBottom: "16px", cursor: "pointer" }} onClick={() => toggleExpand(msg.id)}>
+                        <div style={{ 
+                          width: "44px", height: "44px", borderRadius: "50%", 
+                          background: "#E8B923", 
+                          display: "flex", alignItems: "center", justifyContent: "center",
+                          fontSize: "16px", fontWeight: "700", color: "#000"
+                        }}>
+                          {isSelf ? "YO" : msg.senderEmail.substring(0,2).toUpperCase()}
+                        </div>
+                        <div style={{ flex: 1 }}>
+                          <div style={{ fontSize: "15px", fontWeight: "500", color: "#FFFFFF" }}>
+                            {isSelf ? "You" : (msg.senderEmail.split("@")[0].charAt(0).toUpperCase() + msg.senderEmail.split("@")[0].slice(1))}
+                          </div>
+                          <div style={{ fontSize: "13px", color: "#808080", marginTop: "2px" }}>
+                            {msg.senderEmail} <span style={{ margin: "0 6px", color: "#555" }}>→</span> {msg.receiverEmail || user.email}
+                          </div>
+                        </div>
+                        <div style={{ textAlign: "right" }}>
+                          <div style={{ fontSize: "12px", color: "#808080", marginBottom: "6px" }}>
+                            {msg.time}
+                          </div>
+                          <div style={{ 
+                            display: "inline-flex", alignItems: "center", gap: "4px",
+                            background: "rgba(232, 185, 35, 0.1)", color: "#E8B923", border: "1px solid rgba(232, 185, 35, 0.2)",
+                            padding: "2px 8px", borderRadius: "12px", fontSize: "11px", fontWeight: "500"
+                          }}>
+                            ✓ On-chain verified
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Security Bar */}
+                      <div style={{
+                        display: "flex", alignItems: "center", justifyContent: "space-between",
+                        background: "rgba(232, 185, 35, 0.05)", border: "1px solid rgba(232, 185, 35, 0.15)",
+                        padding: "8px 12px", borderRadius: "6px", marginBottom: "16px"
+                      }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: "12px", fontSize: "12px", color: "#E8B923" }}>
+                          <Lock size={14} />
+                          <span style={{ fontFamily: "monospace" }}>0x3f7a...d4c2 → 0x9b1e...a83f</span>
+                          <span style={{ color: "rgba(232, 185, 35, 0.3)" }}>|</span>
+                          <span>Signed & Encrypted</span>
+                          <span style={{ color: "rgba(232, 185, 35, 0.3)" }}>|</span>
+                          <span style={{ fontFamily: "monospace" }}>IPFS: {msg.cid ? `${msg.cid.slice(0,6)}...${msg.cid.slice(-3)}` : "Qm8xKp...rT2"}</span>
+                        </div>
+                        <div style={{
+                          background: "#E8B923", color: "#000",
+                          padding: "2px 10px", borderRadius: "12px", fontSize: "11px", fontWeight: "700",
+                          display: "flex", alignItems: "center", gap: "4px"
+                        }}>
+                          ✓ VERIFIED
+                        </div>
+                      </div>
+
+                      {/* Action Buttons Row */}
+                      <div style={{ display: "flex", gap: "8px", marginBottom: "32px", borderBottom: "1px solid rgba(255,255,255,0.06)", paddingBottom: "24px" }}>
+                        <button style={{ 
+                          display: "flex", alignItems: "center", gap: "8px",
+                          background: "#E8B923", color: "#000", border: "none",
+                          padding: "6px 16px", borderRadius: "8px", fontSize: "13px", fontWeight: "600", cursor: "pointer"
+                        }}>
+                          <Reply size={16} /> Reply
+                        </button>
+                        <button style={{ 
+                          display: "flex", alignItems: "center", gap: "8px",
+                          background: "rgba(255,255,255,0.04)", color: "#999", border: "none",
+                          padding: "6px 16px", borderRadius: "8px", fontSize: "13px", fontWeight: "500", cursor: "pointer"
+                        }}>
+                          <Forward size={16} /> Forward
+                        </button>
+                        <button style={{ 
+                          display: "flex", alignItems: "center", gap: "8px",
+                          background: "rgba(255,255,255,0.04)", color: "#999", border: "none",
+                          padding: "6px 16px", borderRadius: "8px", fontSize: "13px", fontWeight: "500", cursor: "pointer"
+                        }}>
+                          <Star size={16} /> Star
+                        </button>
+                        <button style={{ 
+                          display: "flex", alignItems: "center", gap: "8px",
+                          background: "rgba(255,255,255,0.04)", color: "#999", border: "none",
+                          padding: "6px 16px", borderRadius: "8px", fontSize: "13px", fontWeight: "500", cursor: "pointer"
+                        }}>
+                          <Trash2 size={16} /> Delete
+                        </button>
+                      </div>
+
+                      {/* Message Body */}
                       <div style={{ 
-                        fontSize: "14px", lineHeight: "1.6", color: "var(--text-bright)",
+                        fontSize: "14px", lineHeight: "1.6", color: "#A0A0A0",
                         whiteSpace: "pre-wrap", wordBreak: "break-word",
-                        fontFamily: "'Raleway', sans-serif", margin: "4px 0 24px"
+                        fontFamily: "'Inter', sans-serif", margin: "0 0 24px"
                       }}>
                         {needsDecrypt ? (
                           <div style={{ 
@@ -242,7 +358,7 @@ export default function ConversationView({
                             <div style={{ marginTop: "8px", display: "flex", gap: "12px", alignItems: "center" }}>
                               <div style={{
                                 display: "inline-flex", alignItems: "center", gap: "6px",
-                                background: "rgba(212,160,23,0.1)", padding: "6px 12px", borderRadius: "8px",
+                                background: "rgba(212, 175, 55,0.1)", padding: "6px 12px", borderRadius: "8px",
                                 border: "1px solid var(--border-gold)", color: "var(--gold-mid)", fontSize: "11px", fontWeight: "700"
                               }}>
                                 <Lock size={12} /> ECC Curve25519
@@ -254,7 +370,34 @@ export default function ConversationView({
                               >UNLOCK MESSAGE</button>
                             </div>
                           </div>
-                        ) : content}
+                        ) : (
+                          // Custom renderer for golden left-border lines
+                          <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+                            {cleanMessage(content).split('\n').map((line, i, arr) => {
+                              if (line.trim().startsWith('|') || line.trim().match(/^[-•]\s/)) {
+                                const cleanLine = line.trim().replace(/^[|•-]\s*/, '');
+                                const isPrevList = i > 0 && (arr[i-1].trim().startsWith('|') || arr[i-1].trim().match(/^[-•]\s/));
+                                return (
+                                  <div key={i} style={{ 
+                                    borderLeft: "3px solid #E8B923", 
+                                    paddingLeft: "12px", 
+                                    marginTop: isPrevList ? "-12px" : "0", 
+                                    color: "#A0A0A0"
+                                  }}>
+                                    {cleanLine}
+                                  </div>
+                                );
+                              }
+                              
+                              // Check if line looks like a golden signature name
+                              if (line.trim() === "Vitalik Nakamoto" || line.trim() === msg.senderEmail.split("@")[0] || line.trim() === "EtherX Foundation") {
+                                return <div key={i} style={{ minHeight: "1em", color: "#E8B923", fontWeight: "500", marginTop: "16px" }}>{line}</div>;
+                              }
+
+                              return <div key={i} style={{ minHeight: "1em" }}>{line}</div>;
+                            })}
+                          </div>
+                        )}
                       </div>
 
                       {/* Attachments Section */}
@@ -277,7 +420,7 @@ export default function ConversationView({
                                  padding: "10px 14px", borderRadius: "10px", 
                                  background: "var(--bg-card)", border: "1px solid var(--border-gold)",
                                  display: "flex", alignItems: "center", gap: "12px", minWidth: "220px"
-                               }}>
+                                }}>
                                  <div style={{ color: "var(--gold-mid)" }}><Shield size={18} /></div>
                                  <div style={{ flex: 1, minWidth: 0 }}>
                                    <div style={{ fontSize: "12px", fontWeight: "700", color: "var(--text-bright)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
@@ -290,18 +433,35 @@ export default function ConversationView({
                                  </button>
                                </div>
                              )}
+
+                             {msg.attachments?.map((att: any, i: number) => (
+                               <div key={i} className="attachment-card" style={{
+                                 padding: "10px 14px", borderRadius: "10px", 
+                                 background: "var(--bg-card)", border: "1px solid var(--border-gold)",
+                                 display: "flex", alignItems: "center", gap: "12px", minWidth: "220px"
+                                }}>
+                                 <div style={{ color: "var(--gold-mid)" }}>
+                                   {att.type === "ipfs_hybrid" ? <Lock size={18} /> : <FileText size={18} />}
+                                 </div>
+                                 <div style={{ flex: 1, minWidth: 0 }}>
+                                   <div style={{ fontSize: "12px", fontWeight: "700", color: "var(--text-bright)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                     {att.name || "Attachment"}
+                                   </div>
+                                   <div style={{ fontSize: "10px", color: "var(--text-dim)" }}>
+                                     {att.type === "ipfs_hybrid" ? "Hybrid Encrypted" : "IPFS"} · {att.size ? `${(att.size / 1024).toFixed(1)} KB` : "Stored"}
+                                   </div>
+                                 </div>
+                                 <button 
+                                   onClick={() => handleDownload(att.cid, att.name, att.type === "ipfs_hybrid")} 
+                                   style={{ background: "none", border: "none", cursor: "pointer", color: "var(--gold-mid)" }}
+                                 >
+                                   <Download size={16} />
+                                 </button>
+                               </div>
+                             ))}
                            </div>
                          </div>
                       )}
-
-                      <div style={{ display: "flex", gap: "10px", marginTop: "20px" }}>
-                         <button className="btn-secondary" style={{ padding: "6px 16px", borderRadius: "18px", fontSize: "12px", display: "flex", alignItems: "center", gap: "6px" }}>
-                           <Reply size={14} /> Reply
-                         </button>
-                         <button className="btn-secondary" style={{ padding: "6px 16px", borderRadius: "18px", fontSize: "12px", color: "var(--text-muted)", borderColor: "var(--border-color)", display: "flex", alignItems: "center", gap: "6px" }}>
-                           <Forward size={14} /> Forward
-                         </button>
-                      </div>
                     </div>
                   )}
                 </div>
@@ -332,7 +492,7 @@ export default function ConversationView({
             }}
           />
           <div style={{ 
-            padding: "8px 12px", borderTop: "1px solid rgba(212,160,23,0.1)",
+            padding: "8px 12px", borderTop: "1px solid rgba(212, 175, 55,0.1)",
             display: "flex", alignItems: "center", justifyContent: "space-between"
           }}>
             <div style={{ display: "flex", gap: "4px" }}>

@@ -71,7 +71,7 @@ export default function ProfilePage() {
         const repair = await db.repairIdentity()
         if (repair.success) {
            setSyncStatus("success")
-           alert(`✅ Identity Repaired & Synced!\nYour public key has been restored (New Length: ${repair.length} chars). Others can now find you.`)
+           alert(`✅ Identity Repaired & Synced!\nYour public key has been restored. Others can now find you.`)
            setSyncing(false)
            return
         } else {
@@ -127,7 +127,7 @@ export default function ProfilePage() {
           display: "flex", alignItems: "center", justifyContent: "center",
           fontSize: "32px", fontWeight: "700", color: "#1a1200",
           margin: "0 auto 16px",
-          boxShadow: "0 0 24px rgba(212,160,23,0.4)",
+          boxShadow: "0 0 24px rgba(212, 175, 55,0.4)",
           animation: "goldPulse 3s ease-in-out infinite",
         }}>
           {user.name?.charAt(0).toUpperCase()}
@@ -146,16 +146,16 @@ export default function ProfilePage() {
             background: 
               syncStatus === "success" ? "rgba(76,175,110,0.2)" : 
               syncStatus === "error" ? "rgba(217,48,37,0.2)" : 
-              syncing ? "rgba(212,160,23,0.1)" : "",
+              syncing ? "rgba(212, 175, 55,0.1)" : "",
             color: 
               syncStatus === "success" ? "#4caf6e" : 
               syncStatus === "error" ? "#e84234" : ""
           }}
         >
-          {syncing ? "📡 Syncing..." : 
-           syncStatus === "success" ? "✅ Identity Synced!" : 
-           syncStatus === "error" ? "❌ Sync Failed" : 
-           "🔄 Sync Identity with Network"}
+          {syncing ? "Syncing..." : 
+           syncStatus === "success" ? "Identity Synced!" : 
+           syncStatus === "error" ? "Sync Failed" : 
+           "Sync Identity with Network"}
         </button>
       </div>
 
@@ -165,17 +165,16 @@ export default function ProfilePage() {
         gap: "12px", marginBottom: "28px",
       }}>
         {[
-          { icon: "📥", label: "Inbox",   count: counts.inbox },
-          { icon: "📤", label: "Sent",    count: counts.sent },
-          { icon: "⭐", label: "Starred", count: counts.starred },
-          { icon: "🚫", label: "Spam",    count: counts.spam },
-          { icon: "🗑️", label: "Trash",   count: counts.trash },
-        ].map(({ icon, label, count }) => (
+          { label: "Inbox",   count: counts.inbox },
+          { label: "Sent",    count: counts.sent },
+          { label: "Starred", count: counts.starred },
+          { label: "Spam",    count: counts.spam },
+          { label: "Trash",   count: counts.trash },
+        ].map(({ label, count }) => (
           <div key={label} style={{
             background: "var(--bg-card)", border: "1px solid var(--border-gold)",
             borderRadius: "12px", padding: "16px", textAlign: "center",
           }}>
-            <div style={{ fontSize: "22px", marginBottom: "6px" }}>{icon}</div>
             <div style={{ fontSize: "22px", fontWeight: "700", color: "var(--gold-light)" }}>
               {count}
             </div>
@@ -195,7 +194,7 @@ export default function ProfilePage() {
           color: "var(--text-muted)", fontSize: "11px", marginBottom: "6px",
           textTransform: "uppercase", letterSpacing: "1px",
         }}>
-          🔑 Public Key
+          Public Key
         </p>
         <p style={{ color: "var(--text-dim)", fontSize: "12px", marginBottom: "12px" }}>
           Share this with others so they can send you encrypted messages.
@@ -226,10 +225,10 @@ export default function ProfilePage() {
 
         <div style={{ display: "flex", gap: "10px" }}>
           <button onClick={copyPublicKey} className="btn-secondary">
-            {copiedPublic ? "✅ Copied!" : "📋 Copy Key"}
+            {copiedPublic ? "Copied!" : "Copy Key"}
           </button>
           <button onClick={downloadPublicKey} className="btn-secondary">
-            ⬇ Download
+            Download
           </button>
         </div>
       </div>
@@ -243,7 +242,7 @@ export default function ProfilePage() {
           color: "var(--text-muted)", fontSize: "11px", marginBottom: "6px",
           textTransform: "uppercase", letterSpacing: "1px",
         }}>
-          🔐 Private Key
+          Private Key
         </p>
         <p style={{ color: "var(--text-dim)", fontSize: "12px", marginBottom: "12px" }}>
           Used to decrypt your messages. Never share this with anyone.
@@ -264,7 +263,7 @@ export default function ProfilePage() {
             border: "1px solid rgba(217,48,37,0.25)", borderRadius: "4px",
             padding: "2px 8px", whiteSpace: "nowrap", flexShrink: 0,
           }}>
-            🔒 Hidden
+            Hidden
           </span>
         </div>
       </div>
@@ -276,7 +275,7 @@ export default function ProfilePage() {
         color: "var(--text-muted)", lineHeight: "1.6",
       }}>
         <p style={{ marginBottom: "4px" }}>
-          🔒 <strong style={{ color: "var(--text-bright)" }}>PGP End-to-End Encrypted</strong>
+          <strong style={{ color: "var(--text-bright)" }}>PGP End-to-End Encrypted</strong>
         </p>
         <p>
           Messages are encrypted with RSA-2048 PGP. Only you can decrypt them
@@ -288,7 +287,6 @@ export default function ProfilePage() {
       {showFullPublicKey && (
         <div className="modal-overlay">
           <div className="modal-content" style={{ maxWidth: "520px", width: "90%" }}>
-            <div style={{ fontSize: "24px", marginBottom: "8px" }}>🔑</div>
             <h3>Your PGP Public Key</h3>
             <p style={{ fontSize: "12px", color: "var(--text-muted)", marginBottom: "12px" }}>
               Safe to share — used by others to encrypt messages to you.
@@ -305,7 +303,7 @@ export default function ProfilePage() {
                 Close
               </button>
               <button className="btn" onClick={() => { copyPublicKey(); setShowFullPublicKey(false) }}>
-                {copiedPublic ? "✅ Copied!" : "📋 Copy Key"}
+                {copiedPublic ? "Copied!" : "Copy Key"}
               </button>
             </div>
           </div>

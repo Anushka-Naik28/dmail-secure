@@ -1,9 +1,9 @@
 "use client"
 
-import { useEffect, useState } from "react"
-import { useRouter } from "next/navigation"
-import PageHeader from "@/components/PageHeader"
-import { Shield, Lock, ChevronLeft, Trash2, Edit3, CheckSquare, Square, MoreVertical, RefreshCw } from "lucide-react"
+import { useEffect, useState, useMemo, useRef } from "react"
+import { useRouter, useSearchParams } from "next/navigation"
+import { cleanMessage } from "@/utils/gun"
+import { Star, Trash2, Mail, Edit3, Lock, Search, ArrowLeft, Paperclip, Send, RefreshCw, Check } from "lucide-react"
 
 interface Draft {
   id: string
@@ -15,12 +15,18 @@ interface Draft {
 
 export default function DraftsPage() {
   const router = useRouter()
-  const [drafts, setDrafts]           = useState<Draft[]>([])
-  const [searchQuery, setSearchQuery] = useState("")
+  const searchParams = useSearchParams()
+  const urlSearch = searchParams.get("search") || ""
+  
+  const [drafts, setDrafts] = useState<Draft[]>([])
   const [selectedDraft, setSelectedDraft] = useState<Draft | null>(null)
-  const [showDeleteModal, setShowDeleteModal] = useState<string | null>(null)
-  const [selectedIds, setSelectedIds] = useState<string[]>([])
+  const [searchQuery, setSearchQuery] = useState(urlSearch)
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [isRefreshing, setIsRefreshing] = useState(false)
+
+  useEffect(() => {
+    if (urlSearch) setSearchQuery(urlSearch)
+  }, [urlSearch])
 
   const loadDrafts = () => {
     if (typeof window === "undefined") return
@@ -28,18 +34,6 @@ export default function DraftsPage() {
     if (!user.email) return
     const stored = localStorage.getItem(`drafts_${user.email}`)
     setDrafts(stored ? JSON.parse(stored) : [])
-  }
-
-  const formatMailDate = (timeStr: string) => {
-    if (!timeStr) return ""
-    const d = new Date(timeStr)
-    if (isNaN(d.getTime())) return timeStr.split(",")[0] || ""
-    const now = new Date()
-    const isToday = d.toDateString() === now.toDateString()
-    if (isToday) return d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true })
-    const isThisYear = d.getFullYear() === now.getFullYear()
-    if (isThisYear) return d.toLocaleDateString("en-US", { month: "short", day: "numeric" })
-    return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "2-digit" })
   }
 
   useEffect(() => {
@@ -51,259 +45,318 @@ export default function DraftsPage() {
     const updated = drafts.filter((d) => d.id !== id)
     localStorage.setItem(`drafts_${user.email}`, JSON.stringify(updated))
     setDrafts(updated)
-    setShowDeleteModal(null)
     if (selectedDraft?.id === id) setSelectedDraft(null)
   }
 
-  const deleteAllDrafts = () => {
+  const filteredDrafts = useMemo(() => {
+    const q = searchQuery.toLowerCase().trim()
+    return drafts
+      .filter((d) =>
+        (d.subject?.toLowerCase() || "").includes(q) ||
+        (d.to?.toLowerCase() || "").includes(q) ||
+        (d.message?.toLowerCase() || "").includes(q)
+      )
+      .sort((a, b) => new Date(b.savedAt).getTime() - new Date(a.savedAt).getTime())
+  }, [drafts, searchQuery])
+
+  const handleToggleSelectAll = () => {
+    if (selectedIds.size > 0 && selectedIds.size === filteredDrafts.length) {
+      setSelectedIds(new Set())
+    } else {
+      setSelectedIds(new Set(filteredDrafts.map(d => d.id)))
+    }
+  }
+
+  const isAllSelected = filteredDrafts.length > 0 && selectedIds.size === filteredDrafts.length
+
+  const handleBulkTrash = () => {
     const user = JSON.parse(localStorage.getItem("user") || "{}")
-    localStorage.setItem(`drafts_${user.email}`, JSON.stringify([]))
-    setDrafts([])
+    const updated = drafts.filter((d) => !selectedIds.has(d.id))
+    localStorage.setItem(`drafts_${user.email}`, JSON.stringify(updated))
+    setDrafts(updated)
+    setSelectedIds(new Set())
     setSelectedDraft(null)
-    setShowDeleteModal(null)
   }
 
   const openInCompose = (draft: Draft) => {
-    // Dispatch openCompose event with draft data pre-filled via URL params
     const params = new URLSearchParams()
     if (draft.to)      params.set("to",      draft.to)
     if (draft.subject) params.set("subject", draft.subject)
     if (draft.message) params.set("message", draft.message)
-
-    // Delete the draft since it's being resumed
     deleteDraft(draft.id)
-
     router.push(`/dashboard/compose?${params.toString()}`)
   }
 
-  const filteredDrafts = drafts.filter(
-    (d) =>
-      d.subject?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      d.to?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      d.message?.toLowerCase().includes(searchQuery.toLowerCase())
-  )
+  const toggleSelection = (id: string, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation()
+    const newSelected = new Set(selectedIds)
+    if (newSelected.has(id)) newSelected.delete(id)
+    else newSelected.add(id)
+    setSelectedIds(newSelected)
+  }
+
+  const renderDraftRow = (draft: Draft) => {
+    const isSelected = selectedDraft?.id === draft.id
+    const isRowChecked = selectedIds.has(draft.id)
+    const recipientName = draft.to?.split("@")[0] || "Draft"
+    const senderInitial = "D"
+    
+    return (
+      <div 
+        key={draft.id}
+        onClick={() => setSelectedDraft(draft)}
+        style={{
+          display: "flex", alignItems: "center", padding: "16px 20px",
+          borderBottom: "1px solid #141414", cursor: "pointer",
+          position: "relative", background: isSelected || isRowChecked ? "rgba(212, 175, 55, 0.05)" : "transparent",
+          transition: "all 0.2s ease"
+        }}
+      >
+        {isSelected && (
+          <div style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: "3px", background: "var(--gold-mid)" }} />
+        )}
+
+        {/* Profile Avatar / Selection Trigger */}
+        <div 
+          onClick={(e) => {
+            e.stopPropagation()
+            toggleSelection(draft.id, e)
+          }}
+          style={{
+            width: "40px", height: "40px", borderRadius: "50%", 
+            background: isRowChecked ? "var(--gold-mid)" : "rgba(232, 66, 52, 0.1)", 
+            display: "flex", alignItems: "center", justifyContent: "center",
+            fontSize: "14px", fontWeight: "700", 
+            color: isRowChecked ? "var(--bg-body)" : "#e84234", 
+            marginRight: "16px", flexShrink: 0,
+            cursor: "pointer", position: "relative",
+            transition: "all 0.2s cubic-bezier(0.4, 0, 0.2, 1)",
+            border: isRowChecked ? "2px solid var(--gold-mid)" : "2px solid transparent"
+          }}
+        >
+          {isRowChecked ? (
+            <Check size={20} strokeWidth={3} />
+          ) : (
+            senderInitial
+          )}
+        </div>
+
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "4px" }}>
+            <span style={{ 
+              fontSize: "14px", fontWeight: "700", 
+              color: "#e84234",
+              fontFamily: "Inter, sans-serif",
+              display: "flex", alignItems: "center", gap: "6px"
+            }}>
+              Draft to: {recipientName}
+            </span>
+            <span style={{ fontSize: "11px", color: "var(--text-dim)" }}>
+              {draft.savedAt}
+            </span>
+          </div>
+          <div style={{ 
+            fontSize: "13px", fontWeight: "600", 
+            color: "var(--text-bright)", overflow: "hidden", 
+            textOverflow: "ellipsis", whiteSpace: "nowrap" 
+          }}>
+            {draft.subject || "(No subject)"}
+          </div>
+          <div style={{ 
+            fontSize: "12px", color: "var(--text-dim)", marginTop: "2px", 
+            overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" 
+          }}>
+            {cleanMessage(draft.message || "").slice(0, 60)}
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  const renderDetailView = () => {
+    if (!selectedDraft) return null
+
+    return (
+      <div style={{ flex: 1, display: "flex", flexDirection: "column", background: "var(--bg-body)", padding: "40px", borderLeft: "1px solid #141414", position: "relative" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "20px", marginBottom: "32px" }}>
+          <button 
+            onClick={() => setSelectedDraft(null)}
+            style={{ 
+              background: "var(--mail-row-border)", border: "1px solid #1F1F1F", borderRadius: "50%", 
+              width: "40px", height: "40px", display: "flex", alignItems: "center", justifyContent: "center",
+              cursor: "pointer", color: "var(--gold-mid)"
+            }}
+          >
+            <ArrowLeft size={18} /> 
+          </button>
+          
+          <h1 style={{ 
+            fontSize: "24px", fontWeight: "700", color: "var(--text-bright)", 
+            margin: 0, fontFamily: "Inter, sans-serif", flex: 1
+          }}>
+            {selectedDraft.subject || "(No subject)"}
+          </h1>
+        </div>
+
+        <div style={{ display: "flex", alignItems: "center", marginBottom: "24px" }}>
+          <div style={{
+            width: "48px", height: "48px", borderRadius: "50%", 
+            background: "rgba(232, 66, 52, 0.1)", border: "1px solid rgba(232, 66, 52, 0.3)",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            fontSize: "16px", fontWeight: "800", color: "#e84234", marginRight: "16px"
+          }}>
+            D
+          </div>
+          <div style={{ flex: 1 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+              <span style={{ fontSize: "16px", fontWeight: "700", color: "#e84234" }}>Local Draft</span>
+              <span style={{ fontSize: "14px", color: "var(--text-dim)" }}>
+                Last saved: {selectedDraft.savedAt}
+              </span>
+            </div>
+            <div style={{ fontSize: "14px", color: "var(--text-dim)", marginTop: "2px" }}>
+              To: {selectedDraft.to || "(No recipient)"}
+            </div>
+          </div>
+        </div>
+
+        <div style={{
+          background: "rgba(232, 66, 52, 0.05)", border: "1px solid rgba(232, 66, 52, 0.15)",
+          borderRadius: "8px", padding: "12px 20px", display: "flex", alignItems: "center", gap: "12px",
+          marginBottom: "32px"
+        }}>
+          <Lock size={14} color="#e84234" />
+          <span style={{ fontSize: "12px", color: "#e84234", fontWeight: "600" }}>
+            Unencrypted Local Draft
+          </span>
+          <p style={{ fontSize: "11px", color: "var(--text-dim)", margin: 0, flex: 1, textAlign: "right" }}>
+            Resuming will prepare the message for PGP encryption.
+          </p>
+        </div>
+
+        <div style={{ display: "flex", gap: "12px", marginBottom: "40px" }}>
+          <button 
+            onClick={() => openInCompose(selectedDraft)}
+            style={{ 
+              background: "var(--gold-mid)", color: "var(--bg-body)", border: "none", borderRadius: "8px",
+              padding: "10px 24px", fontSize: "13px", fontWeight: "700", cursor: "pointer",
+              display: "flex", alignItems: "center", gap: "8px"
+            }}
+          >
+            <Edit3 size={16} /> Resume Draft
+          </button>
+          <button 
+            onClick={() => deleteDraft(selectedDraft.id)}
+            style={{ 
+              background: "var(--mail-row-border)", color: "var(--text-bright)", border: "1px solid #1F1F1F", borderRadius: "8px",
+              padding: "10px 20px", fontSize: "13px", fontWeight: "600", cursor: "pointer"
+            }}
+          >
+            <Trash2 size={16} /> Discard
+          </button>
+        </div>
+
+        <div style={{ flex: 1, overflowY: "auto", display: "flex", flexDirection: "column" }}>
+          <div style={{ 
+            color: "var(--text-bright)", fontSize: "15px", lineHeight: "1.6", 
+            whiteSpace: "pre-wrap", fontFamily: "Inter, sans-serif",
+            marginBottom: "40px"
+          }}>
+            {selectedDraft.message || "(No body content)"}
+          </div>
+        </div>
+      </div>
+    )
+  }
 
   return (
-    <>
-      <PageHeader 
-        title="Drafts"
-        count={drafts.length}
-        searchQuery={searchQuery}
-        onSearchChange={setSearchQuery}
-        placeholder="Search drafts..."
-        rightElement={
-          drafts.length > 0 && (
-            <button
-              onClick={() => setShowDeleteModal("all")}
+    <div style={{ display: "flex", height: "100%", background: "var(--bg-body)", overflow: "hidden" }}>
+      <div style={{ 
+        width: selectedDraft ? "360px" : "100%", 
+        display: "flex", flexDirection: "column", flexShrink: 0,
+        transition: "width 0.3s ease",
+        maxWidth: selectedDraft ? "360px" : "1200px",
+        margin: selectedDraft ? "0" : "0 auto"
+      }}>
+        <div style={{ padding: "24px 24px 12px" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "24px" }}>
+            <h2 style={{ fontSize: "24px", fontWeight: "700", color: "var(--text-bright)", margin: 0, fontFamily: "Inter, sans-serif" }}>Drafts</h2>
+            <button 
+              onClick={() => { setIsRefreshing(true); loadDrafts(); setTimeout(() => setIsRefreshing(false), 800) }}
+              style={{ background: "none", border: "none", color: "var(--text-dim)", cursor: "pointer" }}
+            >
+              <RefreshCw size={18} style={{ animation: isRefreshing ? "spin 1s linear infinite" : "none" }} />
+            </button>
+          </div>
+          
+          <div style={{ position: "relative", marginBottom: "16px" }}>
+            <Search size={16} color="var(--text-dim)" style={{ position: "absolute", left: "12px", top: "50%", transform: "translateY(-50%)" }} />
+            <input 
+              type="text" 
+              placeholder="Search drafts..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
               style={{
-                padding: "6px 14px",
-                background: "rgba(217,48,37,0.08)",
-                border: "1px solid rgba(217,48,37,0.3)",
-                borderRadius: "8px", cursor: "pointer",
-                fontSize: "11px", color: "#e84234",
-                fontFamily: "Raleway, sans-serif", fontWeight: "600",
+                width: "100%", background: "var(--bg-card)", border: "1px solid #141414", borderRadius: "10px",
+                padding: "10px 12px 10px 40px", color: "var(--text-bright)", fontSize: "13px", outline: "none"
               }}
-            >🗑️ Clear All</button>
-          )
-        }
-      />
+            />
+          </div>
 
-      <div style={{ padding: "0 20px" }}>
-        {/* Info banner */}
-        <div style={{
-          background: "rgba(212,160,23,0.04)", border: "1px solid rgba(212,160,23,0.15)",
-          borderRadius: "10px", padding: "10px 14px", marginBottom: "16px",
-          marginTop: "16px",
-          fontSize: "12px", color: "var(--text-muted)", lineHeight: "1.6",
+          <div style={{ 
+            background: "rgba(212, 160, 89, 0.05)", border: "1px solid rgba(212, 160, 89, 0.1)",
+            padding: "8px 12px", borderRadius: "8px", fontSize: "11px", color: "var(--text-muted)"
+          }}>
+            Drafts are saved locally on this device.
+          </div>
+        </div>
+
+        <div style={{ 
+          display: "flex", alignItems: "center", gap: "16px",
+          padding: "12px 24px", borderBottom: "1px solid #141414",
+          background: "rgba(255,255,255,0.02)"
         }}>
-          💾 Drafts are saved automatically every 30 seconds while composing, and when you click Save Draft.
-          They are stored locally on your device.
+          <button 
+            onClick={handleToggleSelectAll}
+            style={{ 
+              display: "flex", alignItems: "center", gap: "10px", 
+              background: "none", border: "none", color: isAllSelected ? "var(--gold-mid)" : "var(--text-dim)",
+              fontSize: "13px", fontWeight: "600", cursor: "pointer", padding: "4px 8px",
+              borderRadius: "6px", transition: "all 0.2s"
+            }}
+          >
+            <div style={{ 
+              width: "18px", height: "18px", borderRadius: "4px", 
+              border: `2px solid ${isAllSelected ? "var(--gold-mid)" : "var(--text-dim)"}`,
+              background: isAllSelected ? "var(--gold-mid)" : "transparent",
+              display: "flex", alignItems: "center", justifyContent: "center"
+            }}>
+              {isAllSelected && <Check size={12} color="var(--bg-body)" strokeWidth={4} />}
+            </div>
+            <span>Select All</span>
+          </button>
+
+          {selectedIds.size > 0 && (
+            <div style={{ display: "flex", alignItems: "center", gap: "12px", marginLeft: "auto" }}>
+              <span style={{ fontSize: "12px", color: "var(--gold-mid)", fontWeight: "600" }}>{selectedIds.size} selected</span>
+              <button onClick={handleBulkTrash} style={{ background: "rgba(232, 66, 52, 0.1)", color: "#e84234", border: "none", borderRadius: "8px", padding: "6px 12px", fontSize: "12px", fontWeight: "700", cursor: "pointer", display: "flex", alignItems: "center", gap: "6px" }}>
+                <Trash2 size={14} /> Discard All
+              </button>
+            </div>
+          )}
+        </div>
+
+        <div style={{ flex: 1, overflowY: "auto" }}>
+          {filteredDrafts.length === 0 ? (
+            <div style={{ padding: "60px 24px", textAlign: "center", color: "var(--text-dim)", fontSize: "14px" }}>
+              No drafts found
+            </div>
+          ) : (
+            filteredDrafts.map(renderDraftRow)
+          )}
         </div>
       </div>
-
-      <div style={{ flex: 1, overflowY: "auto", position: "relative" }}>
-        {!selectedDraft ? (
-          <div className="mail-list" style={{ display: "flex", flexDirection: "column" }}>
-            <div className="folder-toolbar" style={{ borderTop: "none" }}>
-              <button className="toolbar-btn" onClick={() => selectedIds.length === filteredDrafts.length ? setSelectedIds([]) : setSelectedIds(filteredDrafts.map(d => d.id))}>
-                {selectedIds.length === filteredDrafts.length && filteredDrafts.length > 0 ? <CheckSquare size={18} color="var(--gold-mid)" /> : <Square size={18} />}
-              </button>
-              <button className="toolbar-btn" onClick={() => { setIsRefreshing(true); loadDrafts(); setTimeout(() => setIsRefreshing(false), 1000) }}>
-                <RefreshCw size={18} style={{ animation: isRefreshing ? "spin 1s linear infinite" : "none" }} />
-              </button>
-              <button className="toolbar-btn"><MoreVertical size={18} /></button>
-            </div>
-
-            {filteredDrafts.length === 0 ? (
-              <div style={{ padding: "100px 40px", textAlign: "center", color: "var(--text-muted)" }}>
-                <div style={{ fontSize: "48px", marginBottom: "20px", opacity: 0.15 }}>📝</div>
-                <div style={{ fontSize: "18px", fontWeight: "600" }}>{searchQuery ? "No results found." : "No drafts found."}</div>
-                <div style={{ fontSize: "13px", opacity: 0.6, marginTop: "8px" }}>Start composing to save a draft locally.</div>
-              </div>
-            ) : (
-              filteredDrafts.map((draft) => {
-                const isActive = selectedDraft?.id === draft.id
-                const isSelected = selectedIds.includes(draft.id)
-                return (
-                  <div
-                    key={draft.id}
-                    className={`mail-row ${isSelected ? "selected" : ""}`}
-                    onClick={() => setSelectedDraft(draft)}
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      padding: "0 8px 0 4px",
-                      minHeight: "52px",
-                      cursor: "pointer",
-                      borderBottom: "1px solid rgba(212,160,23,0.07)",
-                      background: isSelected ? "rgba(212,160,23,0.09)" : "transparent",
-                      transition: "background 0.15s",
-                      gap: 0,
-                      position: "relative",
-                    }}
-                  >
-                    {/* Draft Marker */}
-                    <div style={{
-                      flexShrink: 0, width: "36px", height: "36px", borderRadius: "50%",
-                      background: "rgba(232,66,52,0.1)", border: "1.5px solid rgba(232,66,52,0.3)",
-                      display: "flex", alignItems: "center", justifyContent: "center",
-                      fontWeight: "700", color: "#e84234", fontSize: "14px",
-                      marginLeft: "4px", marginRight: "10px",
-                    }}>
-                      📝
-                    </div>
-
-                    {/* Checkbox Area — fixed 56px */}
-                    <div onClick={(e) => e.stopPropagation()} style={{ flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", width: "56px", marginRight: "8px" }}>
-                      <div
-                        className={`mail-row-checkbox ${isSelected ? "checked" : ""}`}
-                        onClick={(e) => { e.stopPropagation(); setSelectedIds(prev => prev.includes(draft.id) ? prev.filter(i => i !== draft.id) : [...prev, draft.id]) }}
-                        style={{ width: "16px", height: "16px", border: "1px solid var(--border-gold)", borderRadius: "3px" }}
-                      >
-                        {isSelected && <CheckSquare size={12} color="#000" />}
-                      </div>
-                    </div>
-
-                    {/* Sender Label — fixed 160px */}
-                    <div className="mail-sender" style={{ width: "160px", flexShrink: 0, marginRight: "12px", border: "none", fontSize: "13px", fontWeight: "700", color: "#e84234" }}>
-                      Draft
-                    </div>
-
-                    {/* Subject + Snippet */}
-                    <div className="mail-content" style={{ flex: 1, border: "none", display: "flex", alignItems: "center", gap: "6px", overflow: "hidden" }}>
-                      <span className="mail-subject" style={{ fontWeight: "600", color: "var(--text-bright)", fontSize: "13px", flexShrink: 0, maxWidth: "200px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                        {draft.subject || "(No subject)"}
-                      </span>
-                      <span style={{ color: "var(--text-muted)", opacity: 0.5, margin: "0 2px", fontSize: "12px" }}>—</span>
-                      <span className="mail-snippet" style={{ fontSize: "12px", color: "var(--text-dim)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                        {draft.message || "(No body content)"}
-                      </span>
-                    </div>
-
-                    {/* Date — fixed 62px */}
-                    <div style={{ flexShrink: 0, fontSize: "12px", marginLeft: "12px", width: "62px", textAlign: "right", color: "var(--text-dim)" }}>
-                      {formatMailDate(draft.savedAt)}
-                    </div>
-                  </div>
-                )
-              })
-            )}
-          </div>
-        ) : (
-          <div style={{ flex: 1, overflowY: "auto", padding: "32px 40px", background: "var(--bg-panel)", animation: "fadeUp 0.3s ease both" }}>
-            <div style={{ marginBottom: "28px" }}>
-              <button
-                onClick={() => setSelectedDraft(null)}
-                style={{ display: "flex", alignItems: "center", gap: "6px", background: "none", border: "none", cursor: "pointer", color: "var(--gold-mid)", fontSize: "13px", fontWeight: "800", letterSpacing: "1px", padding: "8px 0" }}
-              >
-                <ChevronLeft size={16} /> DRAFTS
-              </button>
-            </div>
-
-            <div style={{ maxWidth: "860px" }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "32px" }}>
-                <h1 style={{ fontSize: "26px", fontFamily: "Cinzel, serif", color: "var(--text-bright)", letterSpacing: "1px", lineHeight: 1.3, margin: 0 }}>
-                  {selectedDraft.subject || "(No subject)"}
-                </h1>
-                <div style={{ display: "flex", gap: "10px" }}>
-                  <button 
-                    onClick={() => setShowDeleteModal(selectedDraft.id)} 
-                    className="chromeless-btn hover-error" 
-                    style={{ padding: "8px", border: "1px solid rgba(232,66,52,0.2)", borderRadius: "8px" }}
-                  >
-                    <Trash2 size={18} color="#e84234" />
-                  </button>
-                  <button 
-                    onClick={() => openInCompose(selectedDraft)} 
-                    className="btn" 
-                    style={{ padding: "8px 20px", fontSize: "12px" }}
-                  >
-                    RESUME DRAFT
-                  </button>
-                </div>
-              </div>
-
-              <div style={{ display: "flex", alignItems: "center", gap: "16px", marginBottom: "32px", paddingBottom: "24px", borderBottom: "1px solid var(--border-gold)" }}>
-                <div style={{ width: "48px", height: "48px", borderRadius: "50%", background: "rgba(232,66,52,0.1)", border: "1.5px solid rgba(232,66,52,0.3)", color: "#e84234", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: "900", fontSize: "20px", flexShrink: 0 }}>
-                  D
-                </div>
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontWeight: "700", color: "#e84234", fontSize: "15px", marginBottom: "4px" }}>DRAFT MESSAGE</div>
-                  <div style={{ fontSize: "13px", color: "var(--text-muted)" }}>
-                    To: <strong style={{ color: "var(--gold-mid)" }}>{selectedDraft.to || "(No recipient)"}</strong>
-                    <span style={{ margin: "0 8px" }}>•</span>Last saved {selectedDraft.savedAt}
-                  </div>
-                </div>
-              </div>
-
-              <div style={{ minHeight: "300px" }}>
-                <div style={{ whiteSpace: "pre-wrap", lineHeight: "1.9", fontSize: "15px", color: "var(--text-bright)", fontFamily: "Inter, Raleway, sans-serif", maxWidth: "760px" }}>
-                  {selectedDraft.message || <em style={{ color: "var(--text-muted)" }}>(No message body)</em>}
-                </div>
-              </div>
-
-              <div style={{ marginTop: "48px", padding: "24px", background: "rgba(232,66,52,0.03)", border: "1px solid rgba(232,66,52,0.15)", borderRadius: "12px", display: "flex", gap: "16px", alignItems: "center" }}>
-                <Shield size={24} color="#e84234" />
-                <div style={{ fontSize: "13px", color: "var(--text-muted)", lineHeight: 1.6 }}>
-                  This is a <strong>local draft</strong>. It remains on this device until sent or deleted. Encryption is performed only when the message is formally transmitted.
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* Delete confirmation modal */}
-      {showDeleteModal && (
-        <div className="modal-overlay">
-          <div className="modal-content">
-            <div style={{ fontSize: "28px", marginBottom: "8px" }}>🗑️</div>
-            <h3>{showDeleteModal === "all" ? "Clear All Drafts?" : "Delete Draft?"}</h3>
-            <p style={{ fontSize: "13px", color: "var(--text-muted)" }}>
-              {showDeleteModal === "all"
-                ? `This will permanently delete all ${drafts.length} drafts.`
-                : "This draft will be permanently deleted."}
-            </p>
-            <div className="modal-actions">
-              <button className="btn-secondary" onClick={() => setShowDeleteModal(null)}>
-                Cancel
-              </button>
-              <button
-                onClick={() => showDeleteModal === "all" ? deleteAllDrafts() : deleteDraft(showDeleteModal)}
-                style={{
-                  padding: "10px 20px", borderRadius: "8px",
-                  border: "1px solid rgba(217,48,37,0.3)",
-                  background: "rgba(217,48,37,0.15)", color: "#e84234",
-                  cursor: "pointer", fontWeight: "700",
-                  fontFamily: "Raleway, sans-serif", fontSize: "13px",
-                }}
-              >
-                {showDeleteModal === "all" ? "Clear All" : "Delete"}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-    </>
+      {renderDetailView()}
+    </div>
   )
 }

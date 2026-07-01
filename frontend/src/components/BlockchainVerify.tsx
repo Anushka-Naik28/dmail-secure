@@ -17,6 +17,10 @@ import {
   type VerificationStatus,
 } from "@/utils/blockchain"
 import { copyToClipboard } from "@/utils/clipboard"
+import { 
+  CheckCircle, Copy, ExternalLink, Trash2, 
+  AlertCircle, Link as LinkIcon, ShieldCheck
+} from "lucide-react"
 
 export default function BlockchainVerify() {
   const [status, setStatus]         = useState<VerificationStatus>("unverified")
@@ -149,8 +153,10 @@ export default function BlockchainVerify() {
             width: "42px", height: "42px", borderRadius: "50%", flexShrink: 0,
             background: "rgba(76,175,110,0.12)", border: "1px solid rgba(76,175,110,0.3)",
             display: "flex", alignItems: "center", justifyContent: "center",
-            fontSize: "20px",
-          }}>✅</div>
+            fontSize: "20px", color: "#4caf6e"
+          }}>
+            <CheckCircle size={24} />
+          </div>
           <div>
             <div style={{ fontSize: "13px", fontWeight: "700", color: "#4caf6e" }}>
               Blockchain Identity Verified
@@ -190,12 +196,16 @@ export default function BlockchainVerify() {
             onClick={handleCopyAddress}
             style={{
               padding: "8px 14px", borderRadius: "8px", cursor: "pointer",
-              background: copiedAddress ? "rgba(76,175,110,0.1)" : "rgba(212,160,23,0.08)",
-              border: `1px solid ${copiedAddress ? "rgba(76,175,110,0.3)" : "rgba(212,160,23,0.3)"}`,
+              background: copiedAddress ? "rgba(76,175,110,0.1)" : "rgba(212, 175, 55,0.08)",
+              border: `1px solid ${copiedAddress ? "rgba(76,175,110,0.3)" : "rgba(212, 175, 55,0.3)"}`,
               color: copiedAddress ? "#4caf6e" : "var(--gold-mid)",
-              fontSize: "12px", fontFamily: "Raleway, sans-serif", fontWeight: "600",
             }}
-          >{copiedAddress ? "✅ Copied!" : "📋 Copy Address"}</button>
+          >
+            <span style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+              {copiedAddress ? <CheckCircle size={14} /> : <Copy size={14} />}
+              {copiedAddress ? "Copied!" : "Copy Address"}
+            </span>
+          </button>
 
           
             <a
@@ -207,8 +217,9 @@ export default function BlockchainVerify() {
               background: "none", border: "1px solid var(--border-gold)",
               color: "var(--text-muted)", fontSize: "12px",
               fontFamily: "Raleway, sans-serif", textDecoration: "none",
+              display: "flex", alignItems: "center", gap: "6px"
             }}
-          >🔗 View on Explorer ↗</a>
+          ><ExternalLink size={14} /> View on Explorer ↗</a>
 
           <button
             onClick={handleRevoke}
@@ -219,8 +230,9 @@ export default function BlockchainVerify() {
               color: "#e84234", fontSize: "12px",
               fontFamily: "Raleway, sans-serif",
               marginLeft: "auto",
+              display: "flex", alignItems: "center", gap: "6px"
             }}
-          >🗑️ Revoke</button>
+          ><Trash2 size={14} /> Revoke</button>
         </div>
       </div>
         )
@@ -232,11 +244,12 @@ export default function BlockchainVerify() {
       {/* No wallet warning */}
       {!walletAvailable && (
         <div style={{
-          background: "rgba(212,160,23,0.06)", border: "1px solid rgba(212,160,23,0.2)",
+          background: "rgba(212, 175, 55,0.06)", border: "1px solid rgba(212, 175, 55,0.2)",
           borderRadius: "10px", padding: "12px 16px", marginBottom: "16px",
           fontSize: "12px", color: "var(--gold-mid)", lineHeight: "1.6",
+          display: "flex", alignItems: "center", gap: "8px"
         }}>
-          ⚠️ No Ethereum wallet detected. Install{" "}
+          <AlertCircle size={14} /> No Ethereum wallet detected. Install{" "}
           <a href="https://metamask.io" target="_blank" rel="noopener noreferrer"
             style={{ color: "var(--gold-mid)", fontWeight: "700" }}>MetaMask</a>
           {" "}or another Web3 wallet to verify your identity.
@@ -259,9 +272,9 @@ export default function BlockchainVerify() {
               width: "22px", height: "22px", borderRadius: "50%", flexShrink: 0,
               display: "flex", alignItems: "center", justifyContent: "center",
               fontSize: "11px", fontWeight: "800",
-              background: s.done ? "rgba(76,175,110,0.15)" : "rgba(212,160,23,0.1)",
+              background: s.done ? "rgba(76,175,110,0.15)" : "rgba(212, 175, 55,0.1)",
               color: s.done ? "#4caf6e" : "var(--gold-mid)",
-              border: `1px solid ${s.done ? "rgba(76,175,110,0.3)" : "rgba(212,160,23,0.2)"}`,
+              border: `1px solid ${s.done ? "rgba(76,175,110,0.3)" : "rgba(212, 175, 55,0.2)"}`,
             }}>
               {s.done ? "✓" : s.n}
             </div>
@@ -276,7 +289,7 @@ export default function BlockchainVerify() {
               <span style={{
                 marginLeft: "auto", display: "inline-block",
                 width: "12px", height: "12px",
-                border: "2px solid rgba(212,160,23,0.2)",
+                border: "2px solid rgba(212, 175, 55,0.2)",
                 borderTop: "2px solid var(--gold-mid)",
                 borderRadius: "50%", animation: "spin 0.8s linear infinite",
               }} />
@@ -289,9 +302,9 @@ export default function BlockchainVerify() {
       {error && (
         <div style={{
           padding: "10px 14px", borderRadius: "8px", marginBottom: "14px",
-          fontSize: "12px", background: "rgba(217,48,37,0.08)", color: "#e84234",
           border: "1px solid rgba(217,48,37,0.25)",
-        }}>⚠️ {error}</div>
+          display: "flex", alignItems: "center", gap: "8px"
+        }}><AlertCircle size={14} /> {error}</div>
       )}
 
       {/* Current wallet */}
@@ -302,7 +315,7 @@ export default function BlockchainVerify() {
           fontSize: "12px", color: "#4caf6e",
           display: "flex", alignItems: "center", gap: "8px",
         }}>
-          <span>🦊</span>
+          <img src="https://raw.githubusercontent.com/MetaMask/brand-resources/master/SVG/metamask-fox.svg" alt="MetaMask" style={{ width: "16px", height: "16px" }} />
           <span style={{ fontFamily: "Courier New, monospace" }}>{shortAddress(walletAddress)}</span>
           <span style={{ color: "var(--text-muted)", marginLeft: "4px" }}>
             · {getChainName(chainId)}
@@ -318,11 +331,11 @@ export default function BlockchainVerify() {
           padding: "11px 24px", borderRadius: "10px", cursor: "pointer",
           background: walletAvailable
             ? "linear-gradient(135deg, var(--gold-rich), var(--gold-light))"
-            : "rgba(212,160,23,0.1)",
-          border: walletAvailable ? "none" : "1px solid rgba(212,160,23,0.2)",
-          color: walletAvailable ? "#000" : "var(--text-muted)",
+            : "rgba(212, 175, 55,0.1)",
+          border: walletAvailable ? "none" : "1px solid rgba(212, 175, 55,0.2)",
+          color: walletAvailable ? "var(--bg-body)" : "var(--text-muted)",
           fontSize: "13px", fontFamily: "Raleway, sans-serif", fontWeight: "700",
-          boxShadow: walletAvailable ? "0 2px 12px rgba(212,160,23,0.3)" : "none",
+          boxShadow: walletAvailable ? "0 2px 12px rgba(212, 175, 55,0.3)" : "none",
           opacity: status === "pending" ? 0.7 : 1,
           display: "flex", alignItems: "center", gap: "8px",
         }}
@@ -339,7 +352,7 @@ export default function BlockchainVerify() {
              step === "storing"    ? "Storing identity..."   : "Verifying..."}
           </>
         ) : (
-          <>🔗 Verify with Ethereum Wallet</>
+          <><LinkIcon size={16} /> Verify with Ethereum Wallet</>
         )}
       </button>
     </div>

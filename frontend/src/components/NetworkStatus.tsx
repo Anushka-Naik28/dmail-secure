@@ -81,7 +81,7 @@ export default function NetworkStatus() {
     <div className="network-status-container" style={{
       padding: "16px",
       borderTop: "1px solid var(--border-gold)",
-      background: "rgba(212,160,23,0.02)",
+      background: "rgba(212, 175, 55,0.02)",
     }}>
       <div style={{
         display: "flex", alignItems: "center", gap: "8px",

@@ -30,47 +30,50 @@ export default function GlobalDiscoveryPage() {
     const localUser = JSON.parse(localStorage.getItem("user") || "{}")
     setUser(localUser)
 
-    // Listen to global feed
-    const collected: GlobalMessage[] = []
+    // Listen to global feed with batched updates
     const feed = gun.get("securemail_global_feed")
+    let batch: GlobalMessage[] = []
+    let timer: NodeJS.Timeout | null = null
+
+    const processBatch = () => {
+      setMessages(prev => {
+        const map = new Map(prev.map(m => [m.id, m]))
+        batch.forEach(m => {
+          if (!map.has(m.id) || (!map.get(m.id).verified && m.verified)) {
+            map.set(m.id, m)
+          }
+        })
+        batch = []
+        return Array.from(map.values()).sort((a, b) => 
+          new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+        )
+      })
+      timer = null
+    }
 
     feed.map().on(async (data: any) => {
       if (!data || !data.id || !data.content) return
       
-      // Verify PoW and Signature asynchronously
       const msg: GlobalMessage = { ...data, verified: false }
+      batch.push(msg)
       
+      if (!timer) timer = setTimeout(processBatch, 200)
+
       if (data.senderDid && data.signature) {
-        // Fetch sender's public key from the network
         gun.get("securemail_pubkeys").get(data.senderEmail).once(async (pubData: any) => {
           if (pubData?.publicKey) {
             const isSigValid = await verifySignature(data.content, data.signature, pubData.publicKey)
             const isPowValid = data.pow ? await verifyPoW(await createChallenge(data.senderEmail, data.content, data.timestamp), data.pow.nonce, data.pow.difficulty) : false
             
-            msg.verified = isSigValid && isPowValid
-            
-            setMessages(prev => {
-              const newArr = prev.map(m => m.id === msg.id ? { ...m, verified: msg.verified } : m)
-              if (!newArr.find(m => m.id === msg.id)) newArr.push(msg)
-              return newArr.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
-            })
+            const verifiedMsg = { ...msg, verified: isSigValid && isPowValid }
+            batch.push(verifiedMsg)
+            if (!timer) timer = setTimeout(processBatch, 200)
           }
         })
       }
-
-      const idx = collected.findIndex(m => m.id === data.id)
-      if (idx >= 0) {
-        collected[idx] = msg
-      } else {
-        collected.push(msg)
-      }
-
-      // Sort newest first
-      const sorted = [...collected].sort((a, b) => 
-        new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
-      )
-      setMessages(sorted)
     })
+
+    return () => { if (timer) clearTimeout(timer) }
   }, [])
 
   const handleBroadcast = async () => {
@@ -153,7 +156,7 @@ export default function GlobalDiscoveryPage() {
           {/* Broadcast Input Area */}
           <div style={{
             ...cardStyle,
-            background: "rgba(212,160,23,0.03)",
+            background: "rgba(212, 175, 55,0.03)",
             borderStyle: "dashed",
             display: "flex", flexDirection: "column", gap: "12px",
             marginBottom: "32px"
@@ -177,9 +180,9 @@ export default function GlobalDiscoveryPage() {
                 disabled={isBroadcasting || !newMsg.trim()}
                 style={{
                   background: "linear-gradient(135deg, var(--gold-rich), var(--gold-light))",
-                  color: "#000", border: "none", borderRadius: "20px",
+                  color: "var(--bg-body)", border: "none", borderRadius: "20px",
                   padding: "8px 20px", fontWeight: "800", fontSize: "12px",
-                  cursor: "pointer", boxShadow: "0 2px 10px rgba(212,160,23,0.3)",
+                  cursor: "pointer", boxShadow: "0 2px 10px rgba(212, 175, 55,0.3)",
                   opacity: (isBroadcasting || !newMsg.trim()) ? 0.6 : 1
                 }}
               >

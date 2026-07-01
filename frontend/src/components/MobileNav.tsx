@@ -71,7 +71,7 @@ export default function MobileNav({ onCompose }: MobileNavProps) {
       display: "flex", alignItems: "center",
       zIndex: 500,
       paddingBottom: "env(safe-area-inset-bottom)",
-      boxShadow: "0 -4px 20px rgba(0,0,0,0.3)",
+      boxShadow: "var(--shadow-deep)",
     }}>
       {navItems.map((item, idx) => {
         // ── Center compose button ──
@@ -85,7 +85,7 @@ export default function MobileNav({ onCompose }: MobileNavProps) {
                   background: "linear-gradient(135deg, var(--gold-rich), var(--gold-light))",
                   border: "none", cursor: "pointer",
                   display: "flex", alignItems: "center", justifyContent: "center",
-                  boxShadow: "0 4px 16px rgba(212,160,23,0.4)",
+                  boxShadow: "0 4px 16px rgba(212, 175, 55,0.4)",
                   transform: "translateY(-8px)",
                   transition: "all 0.2s ease",
                 }}
@@ -96,7 +96,7 @@ export default function MobileNav({ onCompose }: MobileNavProps) {
                   (e.currentTarget as HTMLButtonElement).style.transform = "translateY(-8px) scale(1)"
                 }}
               >
-                <PenSquare size={22} color="#000" />
+                <PenSquare size={22} color="var(--bg-body)" />
               </button>
             </div>
           )

@@ -1,21 +1,16 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { useRouter } from "next/navigation"
-import { db, generateKeyPair } from "@/utils/gun"
 import Logo from "@/components/Logo"
-import { saveAccount } from "@/utils/accounts"
-import { copyToClipboard } from "@/utils/clipboard"
-interface User {
-  name: string
-  email: string
-  password: string
-  publicKey: string
-  privateKey: string
-}
+import { Eye, EyeOff, Lock, Mail, CheckCircle, Shield, Clipboard, ShieldCheck, ShieldAlert, ArrowLeft, ArrowRight } from "lucide-react"
+
+// DYNAMIC IMPORTS to prevent 500 Internal Server Errors during SSR
+// We load heavy dependencies only when the user interacts or after hydration.
 
 export default function Signup() {
   const router = useRouter()
+  const [mounted, setMounted] = useState(false)
 
   const [name, setName] = useState("")
   const [password, setPassword] = useState("")
@@ -24,6 +19,12 @@ export default function Signup() {
   const [createdEmail, setCreatedEmail] = useState("")
   const [showSuccessModal, setShowSuccessModal] = useState(false)
   const [loading, setLoading] = useState(false)
+
+  useEffect(() => {
+    setMounted(true)
+  }, [])
+
+  const [mnemonic, setMnemonic] = useState("")
 
   const createAccount = async () => {
     if (!name || !password) {
@@ -47,81 +48,98 @@ export default function Signup() {
     }
 
     setLoading(true)
-    setMessage({ text: "Generating your PGP encryption keys...", type: "success" })
+    setMessage({ text: "Checking availability in the decentralized mesh...", type: "success" })
 
     try {
+      const { db } = await import("@/utils/gun")
       const cleanName = name.toLowerCase().replace(/\s+/g, "")
+      
+      // 🛡️ [Anti-Collision] Check if identifier is already taken
+      const exists = await new Promise<boolean>((res) => {
+        const timeout = setTimeout(() => res(false), 5000)
+        // We'll generate a tentative email to check
+        // Note: The actual email generation is randomized below, but we can check if the base name is heavily used or if specific patterns exist.
+        // Actually, let's just generate the email FIRST then check.
+        res(false) // Placeholder, real check below
+      })
+
+      const { saveAccount } = await import("@/utils/accounts")
+      const { generateSovereignIdentity } = await import("@/utils/identity")
+
       const randomSuffix = Math.floor(1000 + Math.random() * 9000)
       const generatedEmail = `${cleanName}${randomSuffix}@dmail.com`
 
-      const { publicKey, privateKey } = await generateKeyPair(name, generatedEmail, password)
-
-      const newUser: User = { name, email: generatedEmail, password, publicKey, privateKey }
-
-      db.getUser(generatedEmail, (existing: any) => {
-        if (existing && existing.email) {
-          setMessage({ text: "Something went wrong, please try again.", type: "error" })
-          setLoading(false)
-          return
-        }
-
-        db.registerUser({ name, email: generatedEmail, publicKey, privateKey, password })
-
-        localStorage.setItem("user", JSON.stringify(newUser))
-
-        saveAccount({
-          name,
-          email: generatedEmail,
-          password,
-          publicKey,
-          privateKey,
-          addedAt: Date.now(),
-        })
-
-        setCreatedEmail(generatedEmail)
-        setMessage(null)
-        setLoading(false)
-        setShowSuccessModal(true)
+      // REAL CHECK
+      const meshData = await new Promise<any>(res => {
+        const timeout = setTimeout(() => res(null), 8000)
+        db.getUser(generatedEmail, (data) => {
+          clearTimeout(timeout)
+          res(data)
+        }, true)
       })
-    } catch (err: any) {
-      console.error("KeyGen Error Detail:", err)
-      const errorMsg = err.message || JSON.stringify(err) || "Unknown error"
-      
-      const isBridgeActive = typeof window !== "undefined" && !!(window.crypto?.subtle as any)?.__isStub;
 
-      if (isBridgeActive || errorMsg.includes("subtle-stub") || errorMsg.includes("NotSupportedError") || errorMsg.includes("WEBCRYPTO_DISABLED")) {
-        setMessage({ 
-          text: "🛡️ HTTP Compatibility Mode: Your browser has restricted native encryption. We've enabled a software fallback, but key generation might take 5-10 seconds.", 
-          type: "success" 
-        })
-        // retry once with the bridge logic if it crashed too early? 
-        // Usually OpenPGP will retry internally if it sees NotSupportedError.
-      } else {
-        setMessage({ 
-          text: `Key generation failed: ${errorMsg}. Please try a different browser or check your connection.`, 
-          type: "error" 
-        })
+      if (meshData && meshData.publicKey) {
+        setMessage({ text: "Identity collision detected. Please try again to generate a unique ID.", type: "error" })
+        setLoading(false)
+        return
       }
+
+      setMessage({ text: "Stretching keys for maximum security...", type: "success" })
+
+      // REVOLUTIONARY: Mathematical Key Generation
+      const identity = await generateSovereignIdentity(generatedEmail, password)
+
+      const userObj = {
+        name,
+        email: generatedEmail,
+        password,
+        publicKey: identity.publicKey,
+        privateKey: identity.privateKey,
+        isDeterministic: true
+      }
+
+      db.registerUser(userObj)
+      localStorage.setItem("user", JSON.stringify(userObj))
+
+      // Announce on Nostr Mesh
+      import("@/utils/nostr").then(({ nostr }) => {
+        nostr.initUserKeys(generatedEmail, password).then(() => {
+          nostr.announce({
+            email: generatedEmail,
+            publicKey: identity.publicKey,
+            did: identity.did,
+            timestamp: Date.now(),
+          })
+        })
+      }).catch(() => {})
+
+      saveAccount({ ...userObj, addedAt: Date.now() })
+
+      setMnemonic(identity.mnemonic)
+      setCreatedEmail(generatedEmail)
+      setMessage(null)
+      setLoading(false)
+      setShowSuccessModal(true)
+    } catch (err: any) {
+      console.error("Signup Error:", err)
+      setMessage({ 
+        text: `Identity generation failed: ${err.message || "Unknown error"}.`, 
+        type: "error" 
+      })
       setLoading(false)
     }
   }
 
+  if (!mounted) return null;
+
   return (
     <div className="page-center">
-      <div className="auth-card" style={{ width: "480px", padding: "50px 48px", borderRadius: "24px" }}>
-        <div style={{ textAlign: "center", marginBottom: "36px", display: "flex", flexDirection: "column", alignItems: "center" }}>
+      <div className="auth-card">
+        <div className="auth-header">
           <Logo size={48} layout="horizontal" showText={true} />
-
-          <div style={{ marginTop: "24px" }}>
-            <h2 style={{
-              fontFamily: "'Cinzel', serif", fontWeight: "600", fontSize: "28px",
-              background: "linear-gradient(90deg, var(--gold-mid), var(--gold-light))",
-              WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent",
-              letterSpacing: "0.5px", margin: "0"
-            }}>
-              Create Account
-            </h2>
-            <p style={{ color: "var(--text-muted)", fontSize: "14px", marginTop: "12px", lineHeight: "1.5" }}>
+          <div className="auth-header-content">
+            <h2 className="auth-title">Create Account</h2>
+            <p className="auth-subtitle">
               Generate your decentralized PGP keys and secure your communication via the ETHREX network.
             </p>
           </div>
@@ -154,7 +172,6 @@ export default function Signup() {
             value={name}
             onChange={(e) => { setName(e.target.value); setMessage(null) }}
             disabled={loading}
-            suppressHydrationWarning
           />
 
           <div style={{ position: "relative" }}>
@@ -167,19 +184,16 @@ export default function Signup() {
               onKeyDown={(e) => e.key === "Enter" && createAccount()}
               disabled={loading}
               style={{ paddingRight: "40px" }}
-              suppressHydrationWarning
             />
             <span
               onClick={() => setShowPassword(!showPassword)}
-              style={{
-                position: "absolute", right: "14px", top: "50%",
-                transform: "translateY(-50%)", cursor: "pointer",
-                fontSize: "16px", opacity: 0.7,
-              }}
-            >{showPassword ? "🙈" : "👁️"}</span>
+              style={{ position: "absolute", right: "12px", top: "50%", transform: "translateY(-50%)", cursor: "pointer", color: "var(--text-dim)", display: "flex" }}
+            >
+              {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+            </span>
           </div>
 
-          <div style={{ marginTop: "40px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <div className="auth-button-row">
             <button
               onClick={() => router.push("/login")}
               style={{
@@ -190,12 +204,10 @@ export default function Signup() {
               }}
               onMouseEnter={(e) => e.currentTarget.style.color = "var(--gold-mid)"}
               onMouseLeave={(e) => e.currentTarget.style.color = "var(--text-muted)"}
-              suppressHydrationWarning
-            >← Sign in instead</button>
+            >Back to Sign In</button>
             <button
               className="btn" onClick={createAccount} disabled={loading}
               style={{ padding: "12px 32px", fontSize: "14px", opacity: loading ? 0.7 : 1, cursor: loading ? "not-allowed" : "pointer" }}
-              suppressHydrationWarning
             >{loading ? "Generating..." : "Create Identity"}</button>
           </div>
         </div>
@@ -205,7 +217,9 @@ export default function Signup() {
       {showSuccessModal && (
         <div className="modal-overlay">
           <div className="modal-content" style={{ width: "100%", maxWidth: "480px", textAlign: "center" }}>
-            <div style={{ fontSize: "42px", marginBottom: "16px", animation: "fadeUp 0.6s ease" }}>🎉</div>
+            <div style={{ color: "var(--gold-mid)", marginBottom: "16px" }}>
+              <CheckCircle size={48} />
+            </div>
             <h3 style={{
               fontFamily: "'Cinzel', serif", fontSize: "24px", color: "var(--gold-mid)",
               marginBottom: "12px", letterSpacing: "1px"
@@ -224,22 +238,63 @@ export default function Signup() {
                 color: "var(--gold-light)", fontWeight: "600", wordBreak: "break-all",
               }}>{createdEmail}</span>
               <button
-                onClick={() => copyToClipboard(createdEmail)}
+                onClick={async () => {
+                   const { copyToClipboard } = await import("@/utils/clipboard");
+                   copyToClipboard(createdEmail);
+                }}
                 style={{
                   background: "none", border: "1px solid var(--gold-mid)", borderRadius: "6px",
                   padding: "4px 10px", cursor: "pointer", color: "var(--gold-mid)",
                   fontSize: "12px", whiteSpace: "nowrap", flexShrink: 0,
                 }}
-              >📋 Copy</button>
+              >
+                <Clipboard size={14} style={{ marginRight: "4px" }} /> Copy
+              </button>
             </div>
-            <p style={{ fontSize: "12px", color: "var(--text-dim)", marginBottom: "4px" }}>
-              ⚠️ Save this address — you'll need it to log in.
+
+            <div style={{ 
+              background: "rgba(212, 175, 55, 0.05)", 
+              border: "1px dashed var(--gold-mid)", 
+              borderRadius: "10px", 
+              padding: "16px",
+              marginBottom: "20px"
+            }}>
+              <p style={{ fontSize: "11px", color: "var(--gold-mid)", fontWeight: "700", textTransform: "uppercase", marginBottom: "8px", letterSpacing: "1px", display: "flex", alignItems: "center", gap: "6px", justifyContent: "center" }}>
+                <ShieldCheck size={14} /> Recovery Phrase (Secure Vault)
+              </p>
+              <div style={{ 
+                display: "grid", 
+                gridTemplateColumns: "repeat(3, 1fr)", 
+                gap: "8px",
+                textAlign: "left"
+              }}>
+                {mnemonic.split(" ").map((word, i) => (
+                  <div key={i} style={{ fontSize: "12px", color: "var(--text-bright)" }}>
+                    <span style={{ color: "var(--text-dim)", marginRight: "4px" }}>{i+1}.</span>
+                    {word}
+                  </div>
+                ))}
+              </div>
+              <button 
+                onClick={async () => {
+                  const { copyToClipboard } = await import("@/utils/clipboard");
+                  copyToClipboard(mnemonic);
+                }}
+                style={{ 
+                  marginTop: "12px", background: "none", border: "none", color: "var(--gold-mid)", 
+                  fontSize: "11px", cursor: "pointer", textDecoration: "underline" 
+                }}
+              >Copy Recovery Phrase</button>
+            </div>
+
+            <p style={{ fontSize: "12px", color: "var(--text-dim)", marginBottom: "4px", display: "flex", alignItems: "center", gap: "6px", justifyContent: "center" }}>
+              <ShieldAlert size={14} color="#e84234" /> Write down your phrase. You can use it to recover your account on any device.
             </p>
             <div style={{ display: "flex", justifyContent: "center", marginTop: "20px" }}>
               <button
                 className="btn"
                 onClick={() => { setShowSuccessModal(false); router.push("/dashboard/inbox") }}
-              >Go to Inbox →</button>
+              >Go to Inbox <ArrowRight size={16} style={{ marginLeft: "8px" }} /></button>
             </div>
           </div>
         </div>

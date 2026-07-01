@@ -10,6 +10,8 @@
  * - This runs PARALLEL to GunDB — if one is down, the other delivers.
  */
 
+import CryptoJS from "crypto-js"
+
 // ── Free Public Nostr Relays (100% no-cost, no sign-up) ──────────────
 const NOSTR_RELAYS = [
   "wss://relay.damus.io",
@@ -35,16 +37,7 @@ export interface NostrIdentity {
 // This gives every user a free, permanent Nostr identity anchored to their DMail credentials.
 
 async function sha256Hex(input: string): Promise<string> {
-  const encoder = new TextEncoder()
-  const data = encoder.encode(input)
-  if (typeof window !== "undefined" && window.crypto?.subtle) {
-    const hash = await window.crypto.subtle.digest("SHA-256", data)
-    return Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2, "0")).join("")
-  }
-  // Fallback: simple hash (limited environments)
-  let hash = 0
-  for (let i = 0; i < input.length; i++) hash = ((hash << 5) - hash) + input.charCodeAt(i)
-  return Math.abs(hash).toString(16).padStart(64, "0").slice(0, 64)
+  return CryptoJS.SHA256(input).toString(CryptoJS.enc.Hex)
 }
 
 function bytesToHex(bytes: Uint8Array): string {
@@ -176,9 +169,9 @@ class NostrMesh {
   private subscribeForDMs(ws: WebSocket) {
     if (!this.localNostrKeys) return
     const subId = `dmail_dm_${this.localNostrKeys.pubkeyHex.slice(0, 8)}`
-    // Subscribe to Kind 4 DMs addressed to this user
-    const filter = { kinds: [4], "#p": [this.localNostrKeys.pubkeyHex], limit: 50 }
-    ws.send(JSON.stringify(["REQ", subId, filter]))
+    const filterIncoming = { kinds: [4], "#p": [this.localNostrKeys.pubkeyHex], limit: 50 }
+    const filterOutgoing = { kinds: [4], authors: [this.localNostrKeys.pubkeyHex], limit: 50 }
+    ws.send(JSON.stringify(["REQ", subId, filterIncoming, filterOutgoing]))
   }
 
   private async handleMessage(msg: MessageEvent) {

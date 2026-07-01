@@ -6,7 +6,7 @@ export default function Inbox(){
 
       <h2>Inbox</h2>
 
-      <p style={{marginTop:"20px",color:"#666"}}>
+      <p style={{marginTop:"20px",color:"var(--text-dim)"}}>
         Your inbox is empty
       </p>
 

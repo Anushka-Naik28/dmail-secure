@@ -20,6 +20,8 @@ const openDB = (): Promise<IDBDatabase> => {
 
 // Save a mail to local cache (full content including decrypted body if available)
 export const cacheMail = async (mail: any): Promise<void> => {
+  if (!mail || !mail.id) return // 🛡️ Safety guard for IndexedDB keyPath
+
   try {
     const db = await openDB()
     const tx = db.transaction(STORE_NAME, "readwrite")

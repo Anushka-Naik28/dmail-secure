@@ -103,13 +103,38 @@ app.post("/pin-file", upload.single("file"), async (req, res) => {
   }
 })
 
-// ── Public relay peers — verified working (April 2025) ──
-const PUBLIC_RELAY_PEERS = [
-  "https://relay.peer.ooo/gun",
-  "https://gun-manhattan.herokuapp.com/gun",
-  "https://gundb.io/gun",
-  "https://gun.eco/gun",
-]
+// ── IPFS Fetch Proxy ──
+// Allows remote devices to fetch content from this master node's local IPFS daemon
+// Bypasses IPFS API CORS and local-only bind restrictions (port 5001/8080)
+app.get("/ipfs/:cid", async (req, res) => {
+  try {
+    // Try to fetch from local Kubo API
+    const response = await fetch(`http://127.0.0.1:5001/api/v0/cat?arg=${req.params.cid}`, {
+      method: "POST",
+      signal: AbortSignal.timeout(5000)
+    })
+    
+    if (!response.ok) {
+      return res.status(404).send("Content not found on local master node")
+    }
+    
+    // We stream the response back. For simplicity we assume it's text/json
+    // as our app primarily fetches JSON vaults and mails.
+    const text = await response.text()
+    try {
+      res.json(JSON.parse(text))
+    } catch {
+      res.send(text)
+    }
+  } catch (err) {
+    res.status(500).send(err.message)
+  }
+})
+
+// 🔒 This server IS the relay — it does not peer with external relays.
+// All devices on the LAN connect HERE and get the same shared data graph.
+// External public relays have their own isolated data graphs — peering with
+// them would scatter mail data and cause inbox inconsistency across devices.
 
 // ── Mount Gun on the HTTP server ──
 const gun = Gun({
@@ -117,13 +142,81 @@ const gun = Gun({
   file: "data",          // persist data to ./data folder
   radisk: true,
   multicast: false,
-  peers: PUBLIC_RELAY_PEERS,  // ← sync with global public relays
+  // peers: [] intentionally empty — this IS the canonical relay
 })
 
-console.log("📡 [Relay] Syncing with global peers:", PUBLIC_RELAY_PEERS)
+console.log("📡 [Relay] Running as primary relay — all devices should connect to this server")
 
 // ── Gun debug logging ──
 gun.on("out", { "#": { "*": "" } })
+
+// ── Fast Relay WebSocket Layer ──
+import { WebSocketServer } from "ws"
+const wss = new WebSocketServer({ noServer: true })
+const clients = new Map() // email -> socket
+
+wss.on("connection", (ws) => {
+  let userEmail = null
+
+  ws.on("message", (message) => {
+    try {
+      const payload = JSON.parse(message)
+      
+      if (payload.type === "auth") {
+        userEmail = payload.email?.trim().toLowerCase()
+        if (userEmail) {
+          clients.set(userEmail, ws)
+          console.log(`🔌 [Relay] User connected: ${userEmail} (Total: ${clients.size})`)
+          ws.send(JSON.stringify({ type: "ready", status: "online" }))
+        }
+      }
+
+      if (payload.type === "push") {
+        const target = payload.recipient?.trim().toLowerCase()
+        const recipientSocket = clients.get(target)
+        
+        if (recipientSocket && recipientSocket.readyState === 1) {
+          console.log(`🚀 [Relay] Instant Push: ${userEmail} -> ${target}`)
+          recipientSocket.send(JSON.stringify({
+            type: "mail",
+            sender: userEmail,
+            content: payload.content, // Fast-Encrypted (ECC+AES)
+            metadata: payload.metadata
+          }))
+          ws.send(JSON.stringify({ type: "push_ack", id: payload.metadata?.id, status: "delivered" }))
+        } else {
+          // If recipient is offline, frontend will fallback to GunDB/Nostr (handled in sendMailNow)
+          ws.send(JSON.stringify({ type: "push_ack", id: payload.metadata?.id, status: "offline" }))
+        }
+      }
+    } catch (err) {
+      console.error("❌ [Relay] Message Error:", err)
+    }
+  })
+
+  ws.on("close", () => {
+    if (userEmail) {
+      clients.delete(userEmail)
+      console.log(`🔌 [Relay] User disconnected: ${userEmail}`)
+    }
+  })
+})
+
+// Handle upgrade from HTTP to WS
+server.on("upgrade", (request, socket, head) => {
+  const url = new URL(request.url, `http://${request.headers.host}`)
+  const pathname = url.pathname
+  
+  if (pathname === "/relay") {
+    wss.handleUpgrade(request, socket, head, (ws) => {
+      wss.emit("connection", ws, request)
+    })
+  } else {
+    // 💡 IMPORTANT: If it's not for our custom relay, do NOT block it.
+    // Let GunDB's internal WebSocket handler take over (usually on /gun).
+    // This allows both the Fast Relay and the Gun Mesh to coexist on the same port.
+  }
+})
 
 // ── Log all local network IPs so you know which IP to use ──
 const getLocalIPs = () => {

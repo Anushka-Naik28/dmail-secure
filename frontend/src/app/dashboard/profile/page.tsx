@@ -5,6 +5,11 @@ import { useRouter } from "next/navigation"
 import { getCounts, subscribe } from "@/utils/mailStore"
 import { copyToClipboard } from "@/utils/clipboard"
 import { db } from "@/utils/gun"
+import { 
+  User, Inbox, Send, Star, AlertOctagon, Trash2, 
+  Key, Copy, Check, Download, Lock, Shield, X, 
+  RefreshCw, CheckCircle2, XCircle 
+} from "lucide-react"
 
 export default function ProfilePage() {
   const router = useRouter()
@@ -116,7 +121,9 @@ export default function ProfilePage() {
       
       {/* Profile Header */}
       <div className="inbox-header-row" style={{ padding: "20px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <h2 className="inbox-title" style={{ margin: 0 }}>👤 Profile Details</h2>
+        <h2 className="inbox-title" style={{ margin: 0, display: "flex", alignItems: "center", gap: "10px" }}>
+          <User size={24} color="var(--gold-mid)" /> Profile Details
+        </h2>
         <button 
           onClick={() => router.push('/dashboard/inbox')}
           style={{
@@ -128,7 +135,7 @@ export default function ProfilePage() {
           onMouseEnter={(e) => e.currentTarget.style.background = "rgba(255,255,255,0.1)"}
           onMouseLeave={(e) => e.currentTarget.style.background = "rgba(255,255,255,0.05)"}
         >
-          ✕ Close
+          <X size={16} /> Close
         </button>
       </div>
 
@@ -143,7 +150,7 @@ export default function ProfilePage() {
           display: "flex", alignItems: "center", justifyContent: "center",
           fontSize: "32px", fontWeight: "700", color: "#1a1200",
           margin: "0 auto 16px",
-          boxShadow: "0 0 24px rgba(212,160,23,0.4)",
+          boxShadow: "0 0 24px rgba(212, 175, 55,0.4)",
           animation: "goldPulse 3s ease-in-out infinite",
         }}>
           {user.name?.charAt(0).toUpperCase()}
@@ -162,7 +169,7 @@ export default function ProfilePage() {
             <span style={{
               fontSize: "10px", color: "var(--text-muted)",
               fontFamily: "Courier New, monospace",
-              padding: "4px 12px", background: "rgba(212,160,23,0.06)",
+              padding: "4px 12px", background: "rgba(212, 175, 55,0.06)",
               borderRadius: "20px", border: "1px solid var(--border-gold)"
             }}>
               ID: {user.did}
@@ -180,19 +187,20 @@ export default function ProfilePage() {
             fontFamily: "Raleway, sans-serif", fontWeight: "700",
             border: "1px solid var(--border-gold)",
             transition: "all 0.2s ease",
+            display: "inline-flex", alignItems: "center", gap: "6px",
             background: 
               syncStatus === "success" ? "rgba(76,175,110,0.2)" : 
               syncStatus === "error" ? "rgba(217,48,37,0.2)" : 
-              syncing ? "rgba(212,160,23,0.1)" : "rgba(212,160,23,0.05)",
+              syncing ? "rgba(212, 175, 55,0.1)" : "rgba(212, 175, 55,0.05)",
             color: 
               syncStatus === "success" ? "#4caf6e" : 
               syncStatus === "error" ? "#e84234" : "var(--gold-mid)"
           }}
         >
-          {syncing ? "📡 Syncing..." : 
-           syncStatus === "success" ? "✅ Identity Synced!" : 
-           syncStatus === "error" ? "❌ Sync Failed" : 
-           "🔄 Sync Identity with Network"}
+          {syncing ? <><RefreshCw size={14} className="spin" /> Syncing...</> : 
+           syncStatus === "success" ? <><CheckCircle2 size={14} /> Identity Synced!</> : 
+           syncStatus === "error" ? <><XCircle size={14} /> Sync Failed</> : 
+           <><RefreshCw size={14} /> Sync Identity with Network</>}
         </button>
       </div>
 
@@ -202,17 +210,17 @@ export default function ProfilePage() {
         gap: "12px", marginBottom: "28px",
       }}>
         {[
-          { icon: "📥", label: "Inbox",   count: counts.inbox   || 0 },
-          { icon: "📤", label: "Sent",    count: counts.sent    || 0 },
-          { icon: "⭐", label: "Starred", count: counts.starred || 0 },
-          { icon: "🚫", label: "Spam",    count: counts.spam    || 0 },
-          { icon: "🗑️", label: "Trash",   count: counts.trash   || 0 },
+          { icon: <Inbox size={22} color="var(--gold-mid)" />, label: "Inbox",   count: counts.inbox   || 0 },
+          { icon: <Send size={22} color="var(--gold-mid)" />, label: "Sent",    count: counts.sent    || 0 },
+          { icon: <Star size={22} color="var(--gold-mid)" />, label: "Starred", count: counts.starred || 0 },
+          { icon: <AlertOctagon size={22} color="var(--gold-mid)" />, label: "Spam",    count: counts.spam    || 0 },
+          { icon: <Trash2 size={22} color="var(--gold-mid)" />, label: "Trash",   count: counts.trash   || 0 },
         ].map(({ icon, label, count }) => (
           <div key={label} style={{
             background: "var(--bg-card)", border: "1px solid var(--border-gold)",
             borderRadius: "12px", padding: "16px", textAlign: "center",
           }}>
-            <div style={{ fontSize: "22px", marginBottom: "6px" }}>{icon}</div>
+            <div style={{ display: "flex", justifyContent: "center", marginBottom: "6px" }}>{icon}</div>
             <div style={{ fontSize: "22px", fontWeight: "700", color: "var(--gold-light)" }}>
               {count}
             </div>
@@ -231,8 +239,9 @@ export default function ProfilePage() {
         <p style={{
           color: "var(--text-muted)", fontSize: "11px", marginBottom: "6px",
           textTransform: "uppercase", letterSpacing: "1px",
+          display: "flex", alignItems: "center", gap: "6px"
         }}>
-          🔑 Public Key (Identity)
+          <Key size={14} /> Public Key (Identity)
         </p>
         <p style={{ color: "var(--text-dim)", fontSize: "12px", marginBottom: "12px" }}>
           Your public ID used by the system to fetch encryption standards for your email address.
@@ -265,20 +274,20 @@ export default function ProfilePage() {
         </p>
 
         <div style={{ display: "flex", gap: "10px" }}>
-          <button onClick={copyPublicKey} className="btn-secondary">
-            {copiedPublic ? "✅ Copied!" : "📋 Copy Key"}
+          <button onClick={copyPublicKey} className="btn-secondary" style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+            {copiedPublic ? <><Check size={14} /> Copied!</> : <><Copy size={14} /> Copy Key</>}
           </button>
           <button onClick={() => {
             if (user.did) {
               copyToClipboard(user.did)
-              setCopiedPublic(true) // Reuse state for toast
+              setCopiedPublic(true)
               setTimeout(() => setCopiedPublic(false), 2000)
             }
-          }} className="btn-secondary">
-            📋 Copy DID
+          }} className="btn-secondary" style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+            <Copy size={14} /> Copy DID
           </button>
-          <button onClick={downloadPublicKey} className="btn-secondary">
-            ⬇ Download .asc
+          <button onClick={downloadPublicKey} className="btn-secondary" style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+            <Download size={14} /> Download .asc
           </button>
         </div>
       </div>
@@ -291,8 +300,9 @@ export default function ProfilePage() {
         <p style={{
           color: "var(--text-muted)", fontSize: "11px", marginBottom: "6px",
           textTransform: "uppercase", letterSpacing: "1px",
+          display: "flex", alignItems: "center", gap: "6px"
         }}>
-          🔐 Private Key (Master Decryption)
+          <Lock size={14} /> Private Key (Master Decryption)
         </p>
         <p style={{ color: "var(--text-dim)", fontSize: "12px", marginBottom: "12px" }}>
           This key is linked to your password. Never share it; it is used to unlock your messages.
@@ -323,8 +333,8 @@ export default function ProfilePage() {
         borderRadius: "12px", padding: "16px", fontSize: "13px",
         color: "var(--text-muted)", lineHeight: "1.6",
       }}>
-        <p style={{ marginBottom: "4px" }}>
-          🔒 <strong style={{ color: "var(--text-bright)" }}>PGP End-to-End Encrypted</strong>
+        <p style={{ marginBottom: "4px", display: "flex", alignItems: "center", gap: "6px" }}>
+          <Shield size={16} /> <strong style={{ color: "var(--text-bright)" }}>PGP End-to-End Encrypted</strong>
         </p>
         <p>
           Messages are encrypted with RSA-2048 PGP. Only you can decrypt them
@@ -336,9 +346,9 @@ export default function ProfilePage() {
       {showFullPublicKey && (
         <div className="modal-overlay">
           <div className="modal-content" style={{ maxWidth: "520px", width: "90%" }}>
-            <div style={{ fontSize: "24px", marginBottom: "8px" }}>🔑</div>
-            <h3>Your PGP Public Key</h3>
-            <p style={{ fontSize: "12px", color: "var(--text-muted)", marginBottom: "12px" }}>
+            <div style={{ marginBottom: "8px", color: "var(--gold-mid)", display: "flex", justifyContent: "center" }}><Key size={32} /></div>
+            <h3 style={{ textAlign: "center", marginBottom: "16px" }}>Your PGP Public Key</h3>
+            <p style={{ fontSize: "12px", color: "var(--text-muted)", marginBottom: "12px", textAlign: "center" }}>
               Safe to share — used by others to encrypt messages to you.
             </p>
             <textarea readOnly value={user.publicKey} style={{
@@ -353,8 +363,8 @@ export default function ProfilePage() {
               <button className="btn-secondary" onClick={() => setShowFullPublicKey(false)}>
                 Close
               </button>
-              <button className="btn" onClick={() => { copyPublicKey(); setShowFullPublicKey(false) }}>
-                {copiedPublic ? "✅ Copied!" : "📋 Copy Key"}
+              <button className="btn" onClick={() => { copyPublicKey(); setShowFullPublicKey(false) }} style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                {copiedPublic ? <><Check size={14} /> Copied!</> : <><Copy size={14} /> Copy Key</>}
               </button>
             </div>
           </div>
@@ -365,9 +375,9 @@ export default function ProfilePage() {
       {showFullPrivateKey && (
         <div className="modal-overlay">
           <div className="modal-content" style={{ maxWidth: "520px", width: "90%", border: "1px solid rgba(217,48,37,0.4)" }}>
-            <div style={{ fontSize: "24px", marginBottom: "8px" }}>🔐</div>
-            <h3 style={{ color: "#e84234" }}>Your PGP Private Key</h3>
-            <p style={{ fontSize: "12px", color: "var(--text-dim)", marginBottom: "12px", background: "rgba(217,48,37,0.1)", padding: "10px", borderRadius: "8px" }}>
+            <div style={{ marginBottom: "8px", color: "#e84234", display: "flex", justifyContent: "center" }}><Lock size={32} /></div>
+            <h3 style={{ color: "#e84234", textAlign: "center", marginBottom: "16px" }}>Your PGP Private Key</h3>
+            <p style={{ fontSize: "12px", color: "var(--text-dim)", marginBottom: "12px", background: "rgba(217,48,37,0.1)", padding: "10px", borderRadius: "8px", textAlign: "center" }}>
               <strong>DANGER:</strong> Never share this key with anyone. It grants full access to decrypt all your private messages.
             </p>
             <textarea readOnly value={user.privateKey || user.privateKeyArmored || "Private key not found locally"} style={{
@@ -385,9 +395,10 @@ export default function ProfilePage() {
               <button onClick={() => { copyPrivateKey(); setShowFullPrivateKey(false) }} style={{
                 background: "rgba(217,48,37,0.15)", border: "1px solid rgba(217,48,37,0.4)",
                 padding: "10px 20px", borderRadius: "8px", cursor: "pointer",
-                color: "#e84234", fontFamily: "Raleway, sans-serif", fontWeight: "700"
+                color: "#e84234", fontFamily: "Raleway, sans-serif", fontWeight: "700",
+                display: "flex", alignItems: "center", gap: "6px"
               }}>
-                {copiedPrivate ? "✅ Copied!" : "📋 Copy Private Key"}
+                {copiedPrivate ? <><Check size={14} /> Copied!</> : <><Copy size={14} /> Copy Private Key</>}
               </button>
             </div>
           </div>

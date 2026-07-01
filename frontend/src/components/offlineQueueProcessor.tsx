@@ -82,7 +82,7 @@ export default function OfflineQueueProcessor() {
           background: "rgba(20,20,20,0.97)", backdropFilter: "blur(8px)",
           border: "1px solid rgba(255,90,90,0.5)", borderRadius: "12px",
           padding: "12px 18px", display: "flex", alignItems: "center",
-          gap: "10px", boxShadow: "0 4px 24px rgba(0,0,0,0.5)",
+          gap: "10px", boxShadow: "var(--shadow-deep)",
         }}>
           <span style={{ fontSize: "16px" }}>📴</span>
           <div>
@@ -99,15 +99,15 @@ export default function OfflineQueueProcessor() {
       {queueCount > 0 && (
         <div style={{
           background: "rgba(20,20,20,0.97)", backdropFilter: "blur(8px)",
-          border: "1px solid rgba(212,160,23,0.5)", borderRadius: "12px",
+          border: "1px solid rgba(212, 175, 55,0.5)", borderRadius: "12px",
           padding: "12px 18px", display: "flex", alignItems: "center",
-          gap: "10px", boxShadow: "0 4px 24px rgba(0,0,0,0.5)",
+          gap: "10px", boxShadow: "var(--shadow-deep)",
         }}>
           {processing ? (
             <>
               <span style={{
                 display: "inline-block", width: "14px", height: "14px",
-                border: "2px solid rgba(212,160,23,0.3)",
+                border: "2px solid rgba(212, 175, 55,0.3)",
                 borderTop: "2px solid var(--gold-mid)",
                 borderRadius: "50%", animation: "spin 0.8s linear infinite",
                 flexShrink: 0,
@@ -142,7 +142,7 @@ export default function OfflineQueueProcessor() {
           background: "rgba(20,20,20,0.97)", backdropFilter: "blur(8px)",
           border: "1px solid rgba(76,175,110,0.5)", borderRadius: "12px",
           padding: "12px 18px", display: "flex", alignItems: "center",
-          gap: "10px", boxShadow: "0 4px 24px rgba(0,0,0,0.5)",
+          gap: "10px", boxShadow: "var(--shadow-deep)",
         }}>
           <span style={{ fontSize: "16px" }}>✅</span>
           <div>

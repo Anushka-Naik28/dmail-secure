@@ -3,7 +3,7 @@
 import { useEffect, useState, useMemo } from "react"
 import { getThreads, subscribe, updateMailInStore, type Thread } from "@/utils/mailStore"
 import { getCachedMail, updateCachedMail } from "@/utils/mailCache"
-import { decryptMessage } from "@/utils/gun"
+import { decryptMessage, cleanMessage } from "@/utils/gun"
 import { getLocalNode } from "@/utils/ipfs"
 import PageHeader from "@/components/PageHeader"
 import { 
@@ -66,30 +66,58 @@ export default function ImportantPage() {
 
   const openMail = async (thread: Thread) => {
     const mail = thread.lastMessage
-    setLoadingMail(true)
+    if (selectedMail?.id === mail.id) return
+
+    // 🚀 OPTIMISTIC OPEN
+    setPassInput("")
+    setPassError("")
+    
+    const initialState = {
+      ...mail,
+      fetchingBody: !mail.message,
+      isDecrypted: !!mail.decryptedMessage
+    }
+    setSelectedMail(initialState)
+
     try {
       const cached = await getCachedMail(mail.id)
       if (cached?.decryptedMessage) {
-        setSelectedMail({ ...mail, message: cached.decryptedMessage, attachments: cached.attachments || [], isDecrypted: true })
-        setLoadingMail(false); return
+        setSelectedMail(prev => prev?.id === mail.id ? {
+          ...prev,
+          message: cached.decryptedMessage,
+          attachments: cached.attachments || mail.attachments || [],
+          isDecrypted: true,
+          fetchingBody: false
+        } : prev)
+        return
       }
-      
+
+      if (mail.message) {
+        setSelectedMail(prev => prev?.id === mail.id ? { ...prev, fetchingBody: false } : prev)
+        return
+      }
+
       if (hasValidCid(mail)) {
         try {
           const { fetchFromIPFS } = await import("@/utils/ipfs")
           const parsed = await fetchFromIPFS(mail.cid)
-          const msg = parsed.message || ""
-          const encrypted = msg.includes("-----BEGIN PGP MESSAGE-----")
-          setSelectedMail({ ...mail, message: msg, isDecrypted: !encrypted, isEncrypted: encrypted, attachments: parsed.attachments || [] })
-          setLoadingMail(false); return
-        } catch (e) {
-          console.warn("Manual fetch fallback failed:", e)
-        }
+          if (parsed && parsed.message) {
+            setSelectedMail(prev => prev?.id === mail.id ? {
+              ...prev,
+              message: parsed.message,
+              attachments: parsed.attachments || mail.attachments || [],
+              isEncrypted: parsed.message.includes("-----BEGIN PGP MESSAGE-----"),
+              fetchingBody: false
+            } : prev)
+            return
+          }
+        } catch (e) { console.warn("IPFS fetch failed:", e) }
       }
-      
-      const backup = mail.message || cached?.message || ""
-      setSelectedMail({ ...mail, message: backup, isDecrypted: !backup.includes("-----BEGIN PGP MESSAGE-----"), attachments: mail.attachments || [] })
-    } catch { } finally { setLoadingMail(false) }
+
+      setSelectedMail(prev => prev?.id === mail.id ? { ...prev, fetchingBody: false } : prev)
+    } catch (err: any) {
+      setSelectedMail(prev => prev?.id === mail.id ? { ...prev, fetchingBody: false } : prev)
+    }
   }
 
   const decryptMail = async () => {
@@ -103,7 +131,7 @@ export default function ImportantPage() {
 
     try {
       const decrypted = await decryptMessage(selectedMail.message, user.privateKey, password)
-      const cleanedBody = decrypted.replace(/\[IPFS Attachment: [^\]]+\]/g, "").trim()
+      const cleanedBody = cleanMessage(decrypted)
       const updated = { ...selectedMail, message: cleanedBody, isDecrypted: true }
       setSelectedMail(updated)
       await updateCachedMail(selectedMail.id, {
@@ -163,7 +191,13 @@ export default function ImportantPage() {
         </div>
 
         <div style={{ minHeight: "300px" }}>
-          {!selectedMail.isDecrypted ? (
+          {selectedMail.fetchingBody ? (
+            <div style={{ padding: "40px 0", display: "flex", flexDirection: "column", gap: "20px" }}>
+              <div style={{ height: "20px", background: "rgba(212, 175, 55,0.05)", borderRadius: "4px", width: "80%", animation: "pulse 2s infinite" }} />
+              <div style={{ height: "20px", background: "rgba(212, 175, 55,0.05)", borderRadius: "4px", width: "95%", animation: "pulse 2s infinite" }} />
+              <div style={{ height: "20px", background: "rgba(212, 175, 55,0.05)", borderRadius: "4px", width: "60%", animation: "pulse 2s infinite" }} />
+            </div>
+          ) : !selectedMail.isDecrypted ? (
             <div style={{
               padding: "48px 40px", background: "var(--bg-vault)",
               border: "1px solid var(--border-gold)", borderRadius: "16px",
@@ -179,7 +213,7 @@ export default function ImportantPage() {
                   <div style={{ marginTop: "20px", display: "flex", gap: "12px" }}>
                     <div style={{
                       display: "inline-flex", alignItems: "center", gap: "6px",
-                      background: "rgba(212,160,23,0.1)", padding: "8px 16px", borderRadius: "8px",
+                      background: "rgba(212, 175, 55,0.1)", padding: "8px 16px", borderRadius: "8px",
                       border: "1px solid var(--border-gold)", color: "var(--gold-mid)", fontSize: "12px", fontWeight: "700"
                     }}>
                       <Lock size={12} /> ECC Curve25519
@@ -197,7 +231,7 @@ export default function ImportantPage() {
             </div>
           ) : (
             <div style={{ whiteSpace: "pre-wrap", lineHeight: "1.9", fontSize: "15px", color: "var(--text-bright)", fontFamily: "Inter, Raleway, sans-serif", maxWidth: "760px" }}>
-              {selectedMail.message}
+              {cleanMessage(selectedMail.message)}
             </div>
           )}
         </div>
@@ -275,7 +309,7 @@ export default function ImportantPage() {
                 const isSelected = selectedIds.includes(thread.id)
                 const senderRaw = mail.senderEmail?.split("@")[0] || "Unknown"
                 const senderName = senderRaw.charAt(0).toUpperCase() + senderRaw.slice(1)
-                const colors = ["#d4a017", "#c9871a", "#9a6b0e", "#b8750a", "#8a5a08"]
+                const colors = ["var(--gold-mid)", "var(--gold-mid)", "var(--gold-deep)", "var(--gold-mid)", "var(--gold-deep)"]
                 const avatarColor = colors[(senderName.charCodeAt(0) || 0) % colors.length]
 
                 return (
@@ -289,8 +323,8 @@ export default function ImportantPage() {
                       padding: "0 8px 0 4px",
                       minHeight: "52px",
                       cursor: "pointer",
-                      borderBottom: "1px solid rgba(212,160,23,0.07)",
-                      background: isSelected ? "rgba(212,160,23,0.09)" : "transparent",
+                      borderBottom: "1px solid rgba(212, 175, 55,0.07)",
+                      background: isSelected ? "rgba(212, 175, 55,0.09)" : "transparent",
                       transition: "background 0.15s",
                       gap: 0,
                       position: "relative",
@@ -300,7 +334,7 @@ export default function ImportantPage() {
                     <div style={{
                       flexShrink: 0, width: "36px", height: "36px", borderRadius: "50%",
                       background: avatarColor, display: "flex", alignItems: "center",
-                      justifyContent: "center", fontWeight: "700", color: "#000",
+                      justifyContent: "center", fontWeight: "700", color: "var(--bg-body)",
                       fontSize: "14px", marginLeft: "4px", marginRight: "10px",
                     }}>
                       {senderName.charAt(0)}
@@ -313,7 +347,7 @@ export default function ImportantPage() {
                         onClick={(e) => toggleSelect(e, thread.id)}
                         style={{ width: "16px", height: "16px", border: "1px solid var(--border-gold)", borderRadius: "3px" }}
                       >
-                        {isSelected && <CheckSquare size={12} color="#000" />}
+                        {isSelected && <CheckSquare size={12} color="var(--bg-body)" />}
                       </div>
                       <span style={{ color: "var(--gold-mid)", fontWeight: "800", fontSize: "18px", marginLeft: "4px" }}>»</span>
                     </div>
@@ -324,8 +358,8 @@ export default function ImportantPage() {
                       {thread.count > 1 && (
                         <span style={{
                           fontSize: "10px", padding: "1px 5px", borderRadius: "10px",
-                          background: "rgba(212,160,23,0.1)", color: "var(--gold-mid)",
-                          fontWeight: "800", marginLeft: "6px", border: "1px solid rgba(212,160,23,0.2)"
+                          background: "rgba(212, 175, 55,0.1)", color: "var(--gold-mid)",
+                          fontWeight: "800", marginLeft: "6px", border: "1px solid rgba(212, 175, 55,0.2)"
                         }}>
                           {thread.count}
                         </span>
@@ -339,7 +373,7 @@ export default function ImportantPage() {
                       </span>
                       <span style={{ color: "var(--text-muted)", opacity: 0.5, margin: "0 2px", fontSize: "12px" }}>—</span>
                       <span className="mail-snippet" style={{ fontSize: "12px", color: "var(--text-dim)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                        🔒 {mail.message?.includes("-----BEGIN PGP MESSAGE-----") ? "Encrypted" : "Standard Content"}
+                        🔒 {mail.message?.includes("-----BEGIN PGP MESSAGE-----") ? "Encrypted" : cleanMessage(mail.message).slice(0, 100)}
                       </span>
                     </div>
 

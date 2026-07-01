@@ -2,6 +2,14 @@
 
 import { useEffect, useRef, useState } from "react"
 import { generateKeyPair, checkGunServer } from "@/utils/gun"
+import { 
+  Settings, Lock, Link as LinkIcon, Tag, Globe, 
+  Moon, Sun, CheckCircle, Edit2, PlusCircle, 
+  Trash2, Key, Eye, EyeOff, Shield, 
+  Download, Folder, FolderOpen, RefreshCw, 
+  CheckCircle2, XCircle, AlertCircle, Sparkles,
+  ArrowRight, Mail, Database, Palette, Layout, Wallet, Search
+} from "lucide-react"
 import BlockchainVerify from "@/components/BlockchainVerify"
 import { getLabels, saveLabel, deleteLabel, createId, PRESET_COLORS, type Label } from "@/utils/labelStore"
 import { copyToClipboard } from "@/utils/clipboard"
@@ -15,7 +23,6 @@ export default function SettingsPage() {
 
   // ── General ──
   const [theme, setTheme] = useState("dark")
-  const [language, setLanguage] = useState("en")
   const [inboxLayout, setInboxLayout] = useState("comfortable")
   const [emailPreview, setEmailPreview] = useState("2lines")
   const [generalSaved, setGeneralSaved] = useState(false)
@@ -31,6 +38,9 @@ export default function SettingsPage() {
   const [exportSuccess, setExportSuccess] = useState(false)
   const [copiedKey, setCopiedKey] = useState(false)
   const [user, setUser] = useState<any>({})
+  const [passkeys, setPasskeys] = useState<any[]>([])
+  const [passkeyLoading, setPasskeyLoading] = useState(false)
+  const [passkeySuccess, setPasskeySuccess] = useState(false)
 
   // ── Labels ──
   const [labels, setLabels] = useState<Label[]>([])
@@ -54,7 +64,6 @@ export default function SettingsPage() {
     setUser(u)
 
     setTheme(localStorage.getItem("theme") || "dark")
-    setLanguage(localStorage.getItem("settings_language") || "en")
     setInboxLayout(localStorage.getItem("settings_inboxLayout") || "comfortable")
     setEmailPreview(localStorage.getItem("settings_emailPreview") || "2lines")
     setLabels(getLabels(u.email || ""))
@@ -70,6 +79,9 @@ export default function SettingsPage() {
     if (window.location.hash === "#network") {
       setActiveSection("network")
     }
+    
+    // Load passkeys from user object
+    if (u.passkeys) setPasskeys(u.passkeys)
   }, [])
 
   // Removed checkStorage and handleConnectStorage
@@ -77,7 +89,6 @@ export default function SettingsPage() {
   // ── General ──────────────────────────────────────────────────
   const saveGeneralSettings = () => {
     localStorage.setItem("theme", theme)
-    localStorage.setItem("settings_language", language)
     localStorage.setItem("settings_inboxLayout", inboxLayout)
     localStorage.setItem("settings_emailPreview", emailPreview)
     document.documentElement.setAttribute("data-theme", theme)
@@ -158,6 +169,66 @@ export default function SettingsPage() {
     setTimeout(() => setImportKeySuccess(false), 3000)
   }
 
+  // ── Passkeys (WebAuthn) ──────────────────────────────────────
+  const handleRegisterPasskey = async () => {
+    if (!window.PublicKeyCredential) {
+      alert("Passkeys are not supported in this browser.")
+      return
+    }
+    setPasskeyLoading(true)
+    try {
+      // In a real decentralized implementation, we generate a challenge
+      const challenge = new Uint8Array(32); window.crypto.getRandomValues(challenge)
+      const userId = new Uint8Array(16); window.crypto.getRandomValues(userId)
+      
+      const options: CredentialCreationOptions = {
+        publicKey: {
+          challenge,
+          rp: { name: "SecureMail Decentralized", id: window.location.hostname },
+          user: { id: userId, name: user.email, displayName: user.name || user.email },
+          pubKeyCredParams: [{ type: "public-key", alg: -7 }, { type: "public-key", alg: -257 }],
+          timeout: 60000,
+          attestation: "none"
+        }
+      }
+      
+      const credential = await navigator.credentials.create(options) as any
+      if (credential) {
+        const newPasskey = {
+          id: credential.id,
+          name: `${navigator.platform} - ${new Date().toLocaleDateString()}`,
+          addedAt: new Date().toISOString(),
+          type: "WebAuthn / Passkey"
+        }
+        const updatedPasskeys = [...passkeys, newPasskey]
+        const updatedUser = { ...user, passkeys: updatedPasskeys }
+        localStorage.setItem("user", JSON.stringify(updatedUser))
+        setUser(updatedUser)
+        setPasskeys(updatedPasskeys)
+        
+        // Sync to mesh
+        const { db } = await import("@/utils/gun")
+        db.registerUser(updatedUser)
+        
+        setPasskeySuccess(true)
+        setTimeout(() => setPasskeySuccess(false), 3000)
+      }
+    } catch (err) {
+      console.error("Passkey registration failed:", err)
+    } finally {
+      setPasskeyLoading(false)
+    }
+  }
+
+  const handleRemovePasskey = (id: string) => {
+    const updated = passkeys.filter(p => p.id !== id)
+    const updatedUser = { ...user, passkeys: updated }
+    localStorage.setItem("user", JSON.stringify(updatedUser))
+    setUser(updatedUser)
+    setPasskeys(updated)
+    import("@/utils/gun").then(({ db }) => db.registerUser(updatedUser))
+  }
+
   // Removed handleCheckServer, handleSavePeer, handleResetPeer, handleCopyPeer
   // ── Shared styles ─────────────────────────────────────────────
   const sectionBtn = (s: Section) => ({
@@ -166,7 +237,7 @@ export default function SettingsPage() {
     borderRadius: "8px", fontFamily: "Raleway, sans-serif",
     fontSize: "13px", fontWeight: activeSection === s ? "700" : "500",
     background: activeSection === s
-      ? "linear-gradient(90deg, rgba(212,160,23,0.15), rgba(212,160,23,0.05))"
+      ? "linear-gradient(90deg, rgba(212, 175, 55,0.15), rgba(212, 175, 55,0.05))"
       : "none",
     borderLeft: activeSection === s ? "3px solid var(--gold-mid)" : "3px solid transparent",
     color: activeSection === s ? "var(--gold-mid)" : "var(--text-bright)",
@@ -203,7 +274,7 @@ export default function SettingsPage() {
           display: "flex", alignItems: "flex-start", gap: "10px",
           padding: "10px 14px", borderRadius: "10px", cursor: "pointer",
           border: `1px solid ${current === opt.value ? "var(--gold-mid)" : "var(--border-gold)"}`,
-          background: current === opt.value ? "rgba(212,160,23,0.06)" : "none",
+          background: current === opt.value ? "rgba(212, 175, 55,0.06)" : "none",
           transition: "all 0.15s ease",
         }}>
           <input
@@ -244,14 +315,14 @@ export default function SettingsPage() {
         }}>Settings</div>
 
         {([
-                  { key: "general",    icon: "⚙️",  label: "General" },
-          { key: "security",   icon: "🔐",  label: "Security" },
-          { key: "blockchain", icon: "🔗",  label: "Blockchain" },
-          { key: "labels",     icon: "🏷️",  label: "Labels" },
-          { key: "network",    icon: "🌍",  label: "Network" },
-        ] as { key: Section; icon: string; label: string }[]).map((s) => (
+          { key: "general",    icon: <Settings size={14} />,  label: "General" },
+          { key: "security",   icon: <Lock size={14} />,      label: "Security" },
+          { key: "blockchain", icon: <LinkIcon size={14} />,  label: "Blockchain" },
+          { key: "labels",     icon: <Tag size={14} />,       label: "Labels" },
+          { key: "network",    icon: <Globe size={14} />,     label: "Network" },
+        ] as { key: Section; icon: React.ReactNode; label: string }[]).map((s) => (
           <button key={s.key} style={sectionBtn(s.key)} onClick={() => setActiveSection(s.key)}>
-            <span style={{ marginRight: "8px" }}>{s.icon}</span>{s.label}
+            <span style={{ marginRight: "10px", display: "inline-flex", alignItems: "center" }}>{s.icon}</span>{s.label}
           </button>
         ))}
       </div>
@@ -262,51 +333,40 @@ export default function SettingsPage() {
         {/* ══ GENERAL ══════════════════════════════════════════ */}
         {activeSection === "general" && (
           <>
-            <h2 className="mail-detail-subject">⚙️ General Settings</h2>
+            <h2 className="mail-detail-subject" style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+              <Settings size={22} color="var(--gold-mid)" /> General Settings
+            </h2>
 
             {generalSaved && (
               <div style={{
                 position: "fixed", top: "24px", right: "24px", zIndex: 1000,
                 background: "rgba(76,175,110,1)", borderRadius: "12px",
                 padding: "12px 24px", fontSize: "14px", color: "#fff",
-                fontWeight: "700", boxShadow: "0 10px 30px rgba(0,0,0,0.4)",
+                fontWeight: "700", boxShadow: "var(--shadow-deep)",
                 animation: "fadeUp 0.3s ease both",
-              }}>✅ Settings applied successfully!</div>
+              }}>                <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                  <CheckCircle size={16} /> Settings applied successfully!
+                </div></div>
             )}
 
             <div style={card}>
               <div style={{ marginBottom: "16px" }}>
-                <div style={{ fontSize: "15px", fontWeight: "700", color: "var(--text-bright)", marginBottom: "4px" }}>🎨 Theme</div>
+                <div style={{ fontSize: "15px", fontWeight: "700", color: "var(--text-bright)", marginBottom: "4px", display: "flex", alignItems: "center", gap: "8px" }}>
+                  <Palette size={16} color="var(--gold-mid)" /> Theme
+                </div>
                 <div style={{ fontSize: "12px", color: "var(--text-muted)" }}>Choose your preferred color scheme</div>
               </div>
               {radioGroup([
-                { value: "dark", label: "🌙 Dark", desc: "Easy on the eyes — recommended for night use" },
-                { value: "light", label: "☀️ Light", desc: "Clean and bright for daytime use" },
+                { value: "dark", label: "Dark Mode", desc: "Easy on the eyes — recommended for night use" },
+                { value: "light", label: "Light Mode", desc: "Clean and bright for daytime use" },
               ], theme, handleThemeChange)}
             </div>
 
             <div style={card}>
               <div style={{ marginBottom: "16px" }}>
-                <div style={{ fontSize: "15px", fontWeight: "700", color: "var(--text-bright)", marginBottom: "4px" }}>🌐 Language</div>
-                <div style={{ fontSize: "12px", color: "var(--text-muted)" }}>Interface display language</div>
-              </div>
-              <span style={labelStyle}>Select Language</span>
-              <select style={selectStyle} value={language} onChange={(e) => setLanguage(e.target.value)}>
-                <option value="en">🇬🇧 English</option>
-                <option value="es">🇪🇸 Spanish</option>
-                <option value="fr">🇫🇷 French</option>
-                <option value="de">🇩🇪 German</option>
-                <option value="hi">🇮🇳 Hindi</option>
-                <option value="ja">🇯🇵 Japanese</option>
-                <option value="zh">🇨🇳 Chinese</option>
-                <option value="ar">🇸🇦 Arabic</option>
-                <option value="pt">🇧🇷 Portuguese</option>
-              </select>
-            </div>
-
-            <div style={card}>
-              <div style={{ marginBottom: "16px" }}>
-                <div style={{ fontSize: "15px", fontWeight: "700", color: "var(--text-bright)", marginBottom: "4px" }}>📋 Inbox Layout</div>
+                <div style={{ fontSize: "15px", fontWeight: "700", color: "var(--text-bright)", marginBottom: "4px", display: "flex", alignItems: "center", gap: "8px" }}>
+                  <Layout size={16} color="var(--gold-mid)" /> Inbox Layout
+                </div>
                 <div style={{ fontSize: "12px", color: "var(--text-muted)" }}>Control how mail rows appear</div>
               </div>
               {radioGroup([
@@ -317,7 +377,9 @@ export default function SettingsPage() {
 
             <div style={card}>
               <div style={{ marginBottom: "16px" }}>
-                <div style={{ fontSize: "15px", fontWeight: "700", color: "var(--text-bright)", marginBottom: "4px" }}>👁️ Email Preview</div>
+                <div style={{ fontSize: "15px", fontWeight: "700", color: "var(--text-bright)", marginBottom: "4px", display: "flex", alignItems: "center", gap: "8px" }}>
+                  <Eye size={16} color="var(--gold-mid)" /> Email Preview
+                </div>
                 <div style={{ fontSize: "12px", color: "var(--text-muted)" }}>How much of the message to show in the list</div>
               </div>
               {radioGroup([
@@ -331,9 +393,9 @@ export default function SettingsPage() {
               padding: "12px 28px",
               background: "linear-gradient(135deg, var(--gold-rich), var(--gold-light))",
               border: "none", borderRadius: "10px", cursor: "pointer",
-              fontSize: "13px", fontWeight: "700", color: "#000",
+              fontSize: "13px", fontWeight: "700", color: "var(--bg-body)",
               fontFamily: "Raleway, sans-serif",
-              boxShadow: "0 2px 12px rgba(212,160,23,0.3)",
+              boxShadow: "0 2px 12px rgba(212, 175, 55,0.3)",
             }}>Save Changes</button>
           </>
         )}
@@ -341,20 +403,24 @@ export default function SettingsPage() {
         {/* ══ SECURITY ════════════════════════════════════════ */}
         {activeSection === "security" && (
           <>
-            <h2 className="mail-detail-subject">🔐 Security Settings</h2>
+            <h2 className="mail-detail-subject" style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+              <Lock size={22} color="var(--gold-mid)" /> Security Settings
+            </h2>
 
             {regenSuccess && (
               <div style={{
                 background: "rgba(76,175,110,0.1)", border: "1px solid rgba(76,175,110,0.3)",
                 borderRadius: "8px", padding: "10px 16px", marginBottom: "16px",
-                fontSize: "12px", color: "#4caf6e",
-              }}>✅ New PGP keys generated and saved. Old keys are no longer valid.</div>
+                fontSize: "12px", color: "#4caf6e", display: "flex", alignItems: "center", gap: "8px"
+              }}><CheckCircle size={14} /> New PGP keys generated and saved. Old keys are no longer valid.</div>
             )}
 
             {/* PGP keys */}
             <div style={card}>
               <div style={{ marginBottom: "16px" }}>
-                <div style={{ fontSize: "15px", fontWeight: "700", color: "var(--text-bright)", marginBottom: "4px" }}>🔑 Your PGP Keys</div>
+                <div style={{ fontSize: "15px", fontWeight: "700", color: "var(--text-bright)", marginBottom: "4px", display: "flex", alignItems: "center", gap: "8px" }}>
+                  <Key size={16} color="var(--gold-mid)" /> Your PGP Keys
+                </div>
                 <div style={{ fontSize: "12px", color: "var(--text-muted)" }}>ECC Curve25519 key pair — generated on account creation</div>
               </div>
 
@@ -383,20 +449,28 @@ export default function SettingsPage() {
                   transition: "filter 0.2s ease",
                   userSelect: showPrivateKey ? "text" : "none",
                 }}>
-                  {user.privateKey ? user.privateKey.slice(0, 200) + "..." : "⚠️ No private key found in localStorage"}
+                  {user.privateKey ? user.privateKey.slice(0, 200) + "..." : "No private key found in localStorage"}
                 </div>
                 <div style={{ display: "flex", gap: "8px", marginTop: "8px" }}>
                   <button onClick={() => setShowPrivateKey(!showPrivateKey)} style={{
                     padding: "6px 12px", borderRadius: "8px", cursor: "pointer",
                     background: "none", border: "1px solid var(--border-gold)",
                     color: "var(--text-bright)", fontSize: "11px", fontFamily: "Raleway, sans-serif",
-                  }}>{showPrivateKey ? "🙈 Hide" : "👁️ Reveal"}</button>
+                    display: "flex", alignItems: "center", gap: "6px"
+                  }}>
+                    {showPrivateKey ? <EyeOff size={14} /> : <Eye size={14} />}
+                    {showPrivateKey ? "Hide" : "Reveal"}
+                  </button>
                   <button onClick={handleCopyPrivateKey} style={{
                     padding: "6px 12px", borderRadius: "8px", cursor: "pointer",
                     background: "none", border: "1px solid var(--border-gold)",
                     color: copiedKey ? "#4caf6e" : "var(--text-bright)",
                     fontSize: "11px", fontFamily: "Raleway, sans-serif",
-                  }}>{copiedKey ? "✅ Copied!" : "📋 Copy"}</button>
+                    display: "flex", alignItems: "center", gap: "6px"
+                  }}>
+                    {copiedKey ? <CheckCircle size={14} /> : <Tag size={14} />}
+                    {copiedKey ? "Copied!" : "Copy"}
+                  </button>
                 </div>
               </div>
 
@@ -405,7 +479,7 @@ export default function SettingsPage() {
                 borderRadius: "8px", padding: "10px 14px",
                 display: "flex", alignItems: "center", gap: "10px",
               }}>
-                <span style={{ fontSize: "16px" }}>🛡️</span>
+                <Shield size={18} color="#4caf6e" />
                 <div>
                   <div style={{ fontSize: "11px", fontWeight: "700", color: "#4caf6e" }}>ECC Curve25519 · OpenPGP.js</div>
                   <div style={{ fontSize: "10px", color: "var(--text-muted)", marginTop: "2px" }}>
@@ -418,7 +492,9 @@ export default function SettingsPage() {
             {/* Export */}
             <div style={card}>
               <div style={{ marginBottom: "16px" }}>
-                <div style={{ fontSize: "15px", fontWeight: "700", color: "var(--text-bright)", marginBottom: "4px" }}>⬇️ Export Private Key</div>
+                <div style={{ fontSize: "15px", fontWeight: "700", color: "var(--text-bright)", marginBottom: "4px" }}>
+                  <Download size={16} style={{ marginRight: "8px", verticalAlign: "middle" }} /> Export Private Key
+                </div>
                 <div style={{ fontSize: "12px", color: "var(--text-muted)" }}>
                   Download your private key as a .asc file. Keep it safe — anyone with this file can decrypt your messages.
                 </div>
@@ -428,20 +504,101 @@ export default function SettingsPage() {
                   background: "rgba(76,175,110,0.1)", border: "1px solid rgba(76,175,110,0.3)",
                   borderRadius: "8px", padding: "8px 12px", marginBottom: "12px",
                   fontSize: "12px", color: "#4caf6e",
-                }}>✅ Private key exported — store it somewhere safe!</div>
+                }}>                <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                  <CheckCircle size={14} /> Private key exported — store it somewhere safe!
+                </div></div>
               )}
               <button onClick={handleExportPrivateKey} style={{
                 padding: "10px 20px", borderRadius: "8px", cursor: "pointer",
-                background: "rgba(212,160,23,0.08)", border: "1px solid rgba(212,160,23,0.3)",
+                background: "rgba(212, 175, 55,0.08)", border: "1px solid rgba(212, 175, 55,0.3)",
                 color: "var(--gold-mid)", fontSize: "13px",
                 fontFamily: "Raleway, sans-serif", fontWeight: "600",
-              }}>⬇️ Download Private Key (.asc)</button>
+                display: "flex", alignItems: "center", gap: "8px"
+              }}>
+                <Download size={16} /> Download Private Key (.asc)
+              </button>
+            </div>
+
+            {/* Passkeys (WebAuthn) */}
+            <div style={card}>
+              <div style={{ marginBottom: "16px" }}>
+                <div style={{ fontSize: "15px", fontWeight: "700", color: "var(--text-bright)", marginBottom: "4px", display: "flex", alignItems: "center", gap: "8px" }}>
+                  <Shield size={16} color="var(--gold-mid)" /> Passkeys & Biometrics
+                </div>
+                <div style={{ fontSize: "12px", color: "var(--text-muted)" }}>
+                  Use your device's biometrics (TouchID, FaceID) to securely unlock your vault across devices.
+                </div>
+              </div>
+
+              {passkeys.length > 0 && (
+                <div style={{ display: "flex", flexDirection: "column", gap: "10px", marginBottom: "20px" }}>
+                  {passkeys.map(pk => (
+                    <div key={pk.id} style={{
+                      display: "flex", justifyContent: "space-between", alignItems: "center",
+                      padding: "12px 16px", background: "var(--bg-panel)",
+                      borderRadius: "10px", border: "1px solid var(--border-gold)",
+                    }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+                        <CheckCircle2 size={18} color="#4caf6e" />
+                        <div>
+                          <div style={{ fontSize: "13px", fontWeight: "600", color: "var(--text-bright)" }}>{pk.name}</div>
+                          <div style={{ fontSize: "10px", color: "var(--text-muted)" }}>Added {new Date(pk.addedAt).toLocaleDateString()}</div>
+                        </div>
+                      </div>
+                      <button onClick={() => handleRemovePasskey(pk.id)} style={{
+                        background: "none", border: "none", color: "var(--text-muted)", cursor: "pointer"
+                      }}>✕</button>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {passkeySuccess && (
+                <div style={{
+                  background: "rgba(76,175,110,0.1)", border: "1px solid rgba(76,175,110,0.3)",
+                  borderRadius: "8px", padding: "10px 16px", marginBottom: "16px",
+                  fontSize: "12px", color: "#4caf6e", display: "flex", alignItems: "center", gap: "8px"
+                }}><CheckCircle size={14} /> Passkey linked to your decentralized identity.</div>
+              )}
+
+              <button 
+                onClick={handleRegisterPasskey}
+                disabled={passkeyLoading}
+                style={{
+                  padding: "12px 24px", borderRadius: "10px", cursor: "pointer",
+                  background: "linear-gradient(135deg, var(--gold-rich), var(--gold-light))",
+                  border: "none", color: "var(--bg-body)", fontSize: "13px",
+                  fontFamily: "Raleway, sans-serif", fontWeight: "800",
+                  display: "flex", alignItems: "center", gap: "10px",
+                  opacity: passkeyLoading ? 0.6 : 1
+                }}
+              >
+                {passkeyLoading ? <RefreshCw size={16} className="spin" /> : <PlusCircle size={16} />}
+                Add New Passkey
+              </button>
+
+              <div style={{
+                marginTop: "20px", padding: "14px", borderRadius: "10px",
+                background: "rgba(212, 175, 55,0.05)", border: "1px dashed var(--gold-mid)",
+              }}>
+                <div style={{ fontSize: "12px", fontWeight: "700", color: "var(--gold-mid)", marginBottom: "8px", display: "flex", alignItems: "center", gap: "8px" }}>
+                  <Database size={14} /> Tech Stack: Decentralized Passkeys
+                </div>
+                <ul style={{ margin: 0, paddingLeft: "18px", fontSize: "11px", color: "var(--text-muted)", lineHeight: "1.6" }}>
+                  <li><b>WebAuthn (FIDO2)</b>: Standard browser API for hardware-backed biometrics.</li>
+                  <li><b>Cross-Device Sync</b>: Passkeys registered here are announced to your GunDB identity mesh.</li>
+                  <li><b>Roaming Authenticators</b>: Use physical security keys (Yubikey) for hardware-bound sovereignty.</li>
+                  <li><b>Platform Sync</b>: Modern OSes (iCloud/Google) sync these passkeys across your logged-in devices automatically.</li>
+                </ul>
+              </div>
             </div>
 
             {/* Import private key */}
             <div style={card}>
               <div style={{ marginBottom: "16px" }}>
-                <div style={{ fontSize: "15px", fontWeight: "700", color: "var(--text-bright)", marginBottom: "4px" }}>📁 Import Private Key</div>
+                <div style={{ fontSize: "15px", fontWeight: "700", color: "var(--text-bright)", marginBottom: "4px" }}>
+                  <FolderOpen size={16} style={{ marginRight: "8px", verticalAlign: "middle" }} /> Import Private Key
+                </div>
                 <div style={{ fontSize: "12px", color: "var(--text-muted)" }}>
                   If you cleared your browser data or switched devices, paste your private key here to restore access to your messages.
                 </div>
@@ -451,14 +608,16 @@ export default function SettingsPage() {
                   background: "rgba(217,48,37,0.08)", border: "1px solid rgba(217,48,37,0.2)",
                   borderRadius: "8px", padding: "8px 12px", marginBottom: "10px",
                   fontSize: "12px", color: "#e84234",
-                }}>⚠️ {importKeyError}</div>
+                }}> {importKeyError}</div>
               )}
               {importKeySuccess && (
                 <div style={{
                   background: "rgba(76,175,110,0.1)", border: "1px solid rgba(76,175,110,0.3)",
                   borderRadius: "8px", padding: "8px 12px", marginBottom: "10px",
                   fontSize: "12px", color: "#4caf6e",
-                }}>✅ Private key imported successfully!</div>
+                }}>                <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                  <CheckCircle size={14} /> Private key imported successfully!
+                </div></div>
               )}
               <textarea
                 value={importKeyText}
@@ -476,10 +635,13 @@ export default function SettingsPage() {
               <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
                 <button onClick={handleImportKey} style={{
                   padding: "10px 20px", borderRadius: "8px", cursor: "pointer",
-                  background: "rgba(212,160,23,0.08)", border: "1px solid rgba(212,160,23,0.3)",
+                  background: "rgba(212, 175, 55,0.08)", border: "1px solid rgba(212, 175, 55,0.3)",
                   color: "var(--gold-mid)", fontSize: "13px",
                   fontFamily: "Raleway, sans-serif", fontWeight: "600",
-                }}>📁 Import Key</button>
+                  display: "flex", alignItems: "center", gap: "8px"
+                }}>
+                  <FolderOpen size={16} /> Import Key
+                </button>
                 <span style={{ fontSize: "11px", color: "var(--text-muted)" }}>
                   Or upload a .asc file:
                 </span>
@@ -487,8 +649,9 @@ export default function SettingsPage() {
                   padding: "8px 14px", borderRadius: "8px", cursor: "pointer",
                   background: "none", border: "1px solid var(--border-gold)",
                   color: "var(--text-muted)", fontSize: "12px", fontFamily: "Raleway, sans-serif",
+                  display: "flex", alignItems: "center", gap: "6px"
                 }}>
-                  📂 Browse
+                  <Folder size={14} /> Browse
                   <input type="file" accept=".asc,.txt" style={{ display: "none" }}
                     onChange={async (e) => {
                       const file = e.target.files?.[0]
@@ -504,7 +667,9 @@ export default function SettingsPage() {
             {/* Login security info */}
             <div style={card}>
               <div style={{ marginBottom: "16px" }}>
-                <div style={{ fontSize: "15px", fontWeight: "700", color: "var(--text-bright)", marginBottom: "4px" }}>🔒 Account Info</div>
+                <div style={{ fontSize: "15px", fontWeight: "700", color: "var(--text-bright)", marginBottom: "4px" }}>
+                  <Shield size={16} style={{ marginRight: "8px", verticalAlign: "middle" }} /> Account Info
+                </div>
               </div>
               <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
                 {[
@@ -528,7 +693,9 @@ export default function SettingsPage() {
             {/* Danger zone */}
             <div style={{ ...card, border: "1px solid rgba(217,48,37,0.3)", background: "rgba(217,48,37,0.03)" }}>
               <div style={{ marginBottom: "16px" }}>
-                <div style={{ fontSize: "15px", fontWeight: "700", color: "#e84234", marginBottom: "4px" }}>⚠️ Regenerate Encryption Keys</div>
+                <div style={{ fontSize: "15px", fontWeight: "700", color: "#e84234", marginBottom: "4px" }}>
+                  <AlertCircle size={16} style={{ marginRight: "8px", verticalAlign: "middle" }} /> Regenerate Encryption Keys
+                </div>
                 <div style={{ fontSize: "12px", color: "var(--text-muted)" }}>
                   Generates a brand new PGP key pair. You will not be able to decrypt old messages after this.
                 </div>
@@ -538,14 +705,17 @@ export default function SettingsPage() {
                 borderRadius: "8px", padding: "10px 14px", marginBottom: "14px",
                 fontSize: "11px", color: "#e84234", display: "flex", gap: "8px",
               }}>
-                <span>⚠️</span>
+                <AlertCircle size={14} style={{ marginTop: "2px" }} />
                 <span>Old encrypted messages will be permanently unreadable. Export important messages first.</span>
               </div>
               <button onClick={() => setShowRegenModal(true)} style={{
                 padding: "10px 20px", borderRadius: "8px", cursor: "pointer",
                 background: "rgba(217,48,37,0.1)", border: "1px solid rgba(217,48,37,0.35)",
                 color: "#e84234", fontSize: "13px", fontFamily: "Raleway, sans-serif", fontWeight: "600",
-              }}>🔄 Regenerate Keys</button>
+                display: "flex", alignItems: "center", gap: "8px"
+              }}>
+                <RefreshCw size={16} /> Regenerate Keys
+              </button>
             </div>
           </>
         )}
@@ -553,27 +723,29 @@ export default function SettingsPage() {
         {/* ══ BLOCKCHAIN ══════════════════════════════════════ */}
         {activeSection === "blockchain" && (
           <>
-            <h2 className="mail-detail-subject">🔗 Blockchain Identity</h2>
+            <h2 className="mail-detail-subject" style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+              <LinkIcon size={22} color="var(--gold-mid)" /> Blockchain Identity
+            </h2>
 
             <div style={{
-              background: "rgba(212,160,23,0.04)", border: "1px solid rgba(212,160,23,0.15)",
+              background: "rgba(212, 175, 55,0.04)", border: "1px solid rgba(212, 175, 55,0.15)",
               borderRadius: "12px", padding: "16px", marginBottom: "20px",
               fontSize: "12px", color: "var(--text-muted)", lineHeight: "1.7",
             }}>
-              <div style={{ fontSize: "14px", fontWeight: "700", color: "var(--text-bright)", marginBottom: "8px" }}>
-                🔗 What is Blockchain Verification?
+              <div style={{ fontSize: "14px", fontWeight: "700", color: "var(--text-bright)", marginBottom: "8px", display: "flex", alignItems: "center", gap: "8px" }}>
+                <LinkIcon size={16} /> What is Blockchain Verification?
               </div>
               Linking your Ethereum wallet to your SecureMail identity proves that you control
               a real crypto wallet. No transaction is sent and no gas is spent — only a cryptographic signature.
               <div style={{ marginTop: "10px", display: "flex", gap: "16px", flexWrap: "wrap" }}>
                 {[
-                  { icon: "🆓", label: "Free — no gas fees" },
-                  { icon: "🔒", label: "No private key exposed" },
-                  { icon: "🌐", label: "Publicly verifiable on-chain" },
-                  { icon: "✅", label: "Works with MetaMask, Coinbase, Rainbow" },
+                  { icon: <Sparkles size={12} />, label: "Free — no gas fees" },
+                  { icon: <Lock size={12} />, label: "No private key exposed" },
+                  { icon: <Globe size={12} />, label: "Publicly verifiable on-chain" },
+                  { icon: <CheckCircle size={12} />, label: "Works with MetaMask, Coinbase, Rainbow" },
                 ].map((item) => (
                   <div key={item.label} style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "11px", color: "var(--text-bright)" }}>
-                    <span>{item.icon}</span><span>{item.label}</span>
+                    {item.icon}<span>{item.label}</span>
                   </div>
                 ))}
               </div>
@@ -581,7 +753,9 @@ export default function SettingsPage() {
 
             <div style={card}>
               <div style={{ marginBottom: "16px" }}>
-                <div style={{ fontSize: "15px", fontWeight: "700", color: "var(--text-bright)", marginBottom: "4px" }}>🦊 Connect Ethereum Wallet</div>
+                <div style={{ fontSize: "15px", fontWeight: "700", color: "var(--text-bright)", marginBottom: "4px", display: "flex", alignItems: "center", gap: "8px" }}>
+                  <Wallet size={16} color="var(--gold-mid)" /> Connect Ethereum Wallet
+                </div>
                 <div style={{ fontSize: "12px", color: "var(--text-muted)" }}>
                   Sign a message with your wallet to verify your identity.
                 </div>
@@ -590,7 +764,9 @@ export default function SettingsPage() {
             </div>
 
             <div style={card}>
-              <div style={{ fontSize: "15px", fontWeight: "700", color: "var(--text-bright)", marginBottom: "14px" }}>🔍 How It Works</div>
+              <div style={{ fontSize: "15px", fontWeight: "700", color: "var(--text-bright)", marginBottom: "14px", display: "flex", alignItems: "center", gap: "8px" }}>
+                <Search size={16} color="var(--gold-mid)" /> How It Works
+              </div>
               <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
                 {[
                   { step: "1", title: "Connect Wallet", desc: "MetaMask opens and asks permission to connect" },
@@ -607,7 +783,7 @@ export default function SettingsPage() {
                       width: "24px", height: "24px", borderRadius: "50%", flexShrink: 0,
                       background: "linear-gradient(135deg, var(--gold-rich), var(--gold-light))",
                       display: "flex", alignItems: "center", justifyContent: "center",
-                      fontSize: "11px", fontWeight: "800", color: "#000",
+                      fontSize: "11px", fontWeight: "800", color: "var(--bg-body)",
                     }}>{item.step}</div>
                     <div>
                       <div style={{ fontSize: "12px", fontWeight: "700", color: "var(--text-bright)" }}>{item.title}</div>
@@ -623,14 +799,17 @@ export default function SettingsPage() {
         {/* ══ LABELS ═══════════════════════════════════════════ */}
         {activeSection === "labels" && (
           <>
-            <h2 className="mail-detail-subject" ref={labelSectionRef}>🏷️ Manage Labels</h2>
+            <h2 className="mail-detail-subject" ref={labelSectionRef} style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+              <Tag size={22} color="var(--gold-mid)" /> Manage Labels
+            </h2>
             <p style={{ fontSize: "12px", color: "var(--text-muted)", marginBottom: "20px" }}>
               Create custom labels to organize your inbox.
             </p>
 
             <div style={{ ...card }}>
-              <div style={{ fontSize: "14px", fontWeight: "700", color: "var(--text-bright)", marginBottom: "14px" }}>
-                {editingLabel ? "✏️ Edit Label" : "✨ Create New Label"}
+              <div style={{ fontSize: "14px", fontWeight: "700", color: "var(--text-bright)", marginBottom: "14px", display: "flex", alignItems: "center", gap: "8px" }}>
+                {editingLabel ? <Edit2 size={16} /> : <PlusCircle size={16} />}
+                {editingLabel ? "Edit Label" : "Create New Label"}
               </div>
 
               <div style={{ display: "flex", gap: "10px", alignItems: "center", marginBottom: "12px", flexWrap: "wrap" }}>
@@ -716,8 +895,8 @@ export default function SettingsPage() {
 
             {labels.length > 0 && (
               <div style={card}>
-                <div style={{ fontSize: "14px", fontWeight: "700", color: "var(--text-bright)", marginBottom: "14px" }}>
-                  📋 Your Labels ({labels.length})
+                <div style={{ fontSize: "14px", fontWeight: "700", color: "var(--text-bright)", marginBottom: "14px", display: "flex", alignItems: "center", gap: "8px" }}>
+                  <Tag size={16} /> Your Labels ({labels.length})
                 </div>
                 <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
                   {labels.map((lbl) => (
@@ -738,7 +917,8 @@ export default function SettingsPage() {
                         background: "none", border: "none", cursor: "pointer",
                         color: "var(--text-muted)", fontSize: "12px",
                         padding: "4px 10px", borderRadius: "6px", fontFamily: "Raleway, sans-serif",
-                      }}>✏️ Edit</button>
+                        display: "flex", alignItems: "center", gap: "4px"
+                      }}><Edit2 size={12} /> Edit</button>
                       <button onClick={() => {
                         const email = user.email || ""
                         deleteLabel(email, lbl.id)
@@ -748,7 +928,8 @@ export default function SettingsPage() {
                         background: "rgba(217,48,37,0.1)", border: "1px solid rgba(217,48,37,0.2)",
                         cursor: "pointer", color: "#e84234", fontSize: "12px",
                         padding: "4px 10px", borderRadius: "6px", fontFamily: "Raleway, sans-serif",
-                      }}>🗑️ Delete</button>
+                        display: "flex", alignItems: "center", gap: "4px"
+                      }}><Trash2 size={12} /> Delete</button>
                     </div>
                   ))}
                 </div>
@@ -760,7 +941,9 @@ export default function SettingsPage() {
         {/* ══ NETWORK & STORAGE ════════════════════════════════ */}
         {activeSection === "network" && (
           <>
-            <h2 className="mail-detail-subject">🌍 Network & Global Storage</h2>
+            <h2 className="mail-detail-subject" style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+              <Globe size={22} color="var(--gold-mid)" /> Network & Global Storage
+            </h2>
             <p style={{ fontSize: "12px", color: "var(--text-muted)", marginBottom: "20px", lineHeight: "1.7" }}>
               DMail uses <strong style={{ color: "var(--text-bright)" }}>Pinata</strong> to pin mail content to the global IPFS network.
               Without this, your emails are only stored locally and cannot be read on other devices.
@@ -772,13 +955,15 @@ export default function SettingsPage() {
               padding: "14px 18px", borderRadius: "12px", marginBottom: "20px",
               background: pinataStatus === "ok"
                 ? "rgba(76,175,110,0.1)" : pinataStatus === "fail"
-                ? "rgba(217,48,37,0.08)" : "rgba(212,160,23,0.06)",
+                ? "rgba(217,48,37,0.08)" : "rgba(212, 175, 55,0.06)",
               border: `1px solid ${pinataStatus === "ok"
                 ? "rgba(76,175,110,0.3)" : pinataStatus === "fail"
-                ? "rgba(217,48,37,0.25)" : "rgba(212,160,23,0.2)"}`,
+                ? "rgba(217,48,37,0.25)" : "rgba(212, 175, 55,0.2)"}`,
             }}>
-              <span style={{ fontSize: "22px" }}>
-                {pinataStatus === "ok" ? "🟢" : pinataStatus === "fail" ? "🔴" : "🟡"}
+              <span style={{ display: "flex", alignItems: "center" }}>
+                {pinataStatus === "ok" ? <CheckCircle2 size={22} color="#4caf6e" /> 
+                : pinataStatus === "fail" ? <XCircle size={22} color="#e84234" /> 
+                : <RefreshCw size={22} color="var(--gold-mid)" className="spin" />}
               </span>
               <div>
                 <div style={{ fontSize: "13px", fontWeight: "700", color: "var(--text-bright)" }}>
@@ -797,8 +982,8 @@ export default function SettingsPage() {
 
             {/* How it works */}
             <div style={card}>
-              <div style={{ fontSize: "14px", fontWeight: "700", color: "var(--text-bright)", marginBottom: "14px" }}>
-                🔄 How Global Mail Works
+              <div style={{ fontSize: "14px", fontWeight: "700", color: "var(--text-bright)", marginBottom: "14px", display: "flex", alignItems: "center", gap: "8px" }}>
+                <RefreshCw size={16} /> How Global Mail Works
               </div>
               <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
                 {[
@@ -816,7 +1001,7 @@ export default function SettingsPage() {
                       width: "24px", height: "24px", borderRadius: "50%", flexShrink: 0,
                       background: "linear-gradient(135deg, var(--gold-rich), var(--gold-light))",
                       display: "flex", alignItems: "center", justifyContent: "center",
-                      fontSize: "11px", fontWeight: "800", color: "#000",
+                      fontSize: "11px", fontWeight: "800", color: "var(--bg-body)",
                     }}>{item.step}</div>
                     <div>
                       <div style={{ fontSize: "12px", fontWeight: "700", color: "var(--text-bright)" }}>{item.title}</div>
@@ -829,8 +1014,8 @@ export default function SettingsPage() {
 
             {/* Explanation card */}
             <div style={card}>
-              <div style={{ fontSize: "15px", fontWeight: "700", color: "var(--text-bright)", marginBottom: "6px" }}>
-                🔑 Developer Pre-Configured
+              <div style={{ fontSize: "15px", fontWeight: "700", color: "var(--text-bright)", marginBottom: "6px", display: "flex", alignItems: "center", gap: "8px" }}>
+                <Key size={16} /> Developer Pre-Configured
               </div>
               <div style={{ fontSize: "12px", color: "var(--text-muted)", marginBottom: "16px", lineHeight: "1.6" }}>
                 Global pinning is handled securely by the backend relay server. You do not need to configure any API keys or accounts. 
@@ -840,8 +1025,8 @@ export default function SettingsPage() {
 
             {/* GunDB relay info */}
             <div style={card}>
-              <div style={{ fontSize: "14px", fontWeight: "700", color: "var(--text-bright)", marginBottom: "12px" }}>
-                📡 GunDB Global Relays
+              <div style={{ fontSize: "14px", fontWeight: "700", color: "var(--text-bright)", marginBottom: "12px", display: "flex", alignItems: "center", gap: "8px" }}>
+                <Database size={16} /> GunDB Global Relays
               </div>
               <div style={{ fontSize: "12px", color: "var(--text-muted)", marginBottom: "12px" }}>
                 These public relays carry your mail index globally. They are always active.
@@ -871,7 +1056,9 @@ export default function SettingsPage() {
       {showRegenModal && (
         <div className="modal-overlay">
           <div className="modal-content">
-            <div style={{ fontSize: "28px", marginBottom: "8px" }}>🔄</div>
+            <div style={{ marginBottom: "12px", display: "flex", justifyContent: "center" }}>
+              <RefreshCw size={32} color="var(--gold-mid)" />
+            </div>
             <h3>Regenerate PGP Keys</h3>
             <p style={{ fontSize: "13px", color: "var(--text-muted)", marginBottom: "16px" }}>
               Enter a new password for your key pair. This will replace your current keys.

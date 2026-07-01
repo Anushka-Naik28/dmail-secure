@@ -1,8 +1,8 @@
 "use client"
 
-import { useEffect, useState, useRef } from "react"
+import { useEffect, useState, useRef, memo } from "react"
 import Link from "next/link"
-import Image from "next/image" // 1. Added Image import
+import Image from "next/image"
 import { useRouter } from "next/navigation"
 import { subscribe, getMails, clearStore, initMailStore, getAllRaw } from "@/utils/mailStore"
 import AccountSwitcher from "@/components/AccountSwitcher"
@@ -19,14 +19,6 @@ interface HeaderProps {
   onCompose?: () => void
 }
 
-interface Notification {
-  id: string
-  subject: string
-  senderEmail: string
-  time: string
-  read: boolean
-}
-
 interface SearchResult {
   id: string
   subject: string
@@ -39,89 +31,91 @@ interface SearchResult {
   isForward?: boolean
 }
 
-export default function Header({ onToggle, onCompose }: HeaderProps) {
+function Header({ onToggle, onCompose }: HeaderProps) {
   const router = useRouter()
 
-  const [name, setName] = useState("User")
   const [currentUser, setCurrentUser] = useState<any>({})
   const [isDark, setIsDark] = useState(true)
-  const [refreshing, setRefreshing] = useState(false)
-  const [refreshed, setRefreshed] = useState(false)
-  const [notifications, setNotifications] = useState<Notification[]>([])
-  const [showNotifs, setShowNotifs] = useState(false)
   const [unreadCount, setUnreadCount] = useState(0)
-
-  // ── Account switcher ──
-  const [showAccountSwitcher, setShowAccountSwitcher] = useState(false)
-  const [accountCount, setAccountCount] = useState(0)
-  const accountRef = useRef<HTMLDivElement>(null)
-  const [accounts, setAccounts] = useState<any[]>([])
-  const [mounted, setMounted] = useState(false)
-
-  // ── Search state ──
+  const [searchFocused, setSearchFocused] = useState(false)
   const [searchQuery, setSearchQuery] = useState("")
   const [searchResults, setSearchResults] = useState<SearchResult[]>([])
   const [showResults, setShowResults] = useState(false)
-  const [searchFocused, setSearchFocused] = useState(false)
   const [activeIndex, setActiveIndex] = useState(-1)
+  const [nodeStatus, setNodeStatus] = useState<"active" | "connecting">("active")
+  const [showAccountSwitcher, setShowAccountSwitcher] = useState(false)
+  const [accountCount, setAccountCount] = useState(0)
 
-  const notifRef = useRef<HTMLDivElement>(null)
   const searchRef = useRef<HTMLDivElement>(null)
+  const accountRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
-  const seenIdsRef = useRef<Set<string>>(new Set())
 
   useEffect(() => {
-    setMounted(true)
-    const checkUser = () => {
-      const user = JSON.parse(localStorage.getItem("user") || "{}")
-      setCurrentUser(user)
-      if (user.name) setName(user.name)
-      else if (user.email) setName(user.email.split("@")[0])
-      else setName("User")
-
-      const accs = getSavedAccounts()
-      setAccountCount(accs.length)
-      setAccounts(accs)
-    }
+    const user = JSON.parse(localStorage.getItem("user") || "{}")
+    setCurrentUser(user)
     const savedTheme = localStorage.getItem("theme") || "dark"
     setIsDark(savedTheme === "dark")
     document.documentElement.setAttribute("data-theme", savedTheme)
-    checkUser()
-    window.addEventListener("storage", checkUser)
-    return () => window.removeEventListener("storage", checkUser)
+
+    const accs = getSavedAccounts()
+    setAccountCount(accs.length)
+
+    const interval = setInterval(async () => {
+      try {
+        const { checkGunServer } = await import("@/utils/gun")
+        const res = await checkGunServer()
+        setNodeStatus(res.reachable ? "active" : "connecting")
+      } catch {
+        setNodeStatus("connecting")
+      }
+    }, 10000)
+
+    return () => clearInterval(interval)
   }, [])
 
   useEffect(() => {
     if (typeof window === "undefined") return
-    const existing = getMails("inbox")
-    existing.forEach((m: any) => seenIdsRef.current.add(m.id))
-
-    const unsub = subscribe(() => {
+    const updateUnread = () => {
       const inbox = getMails("inbox")
-      const newMails = inbox.filter((m: any) => !seenIdsRef.current.has(m.id))
-      if (newMails.length > 0) {
-        newMails.forEach((m: any) => seenIdsRef.current.add(m.id))
-        setNotifications((prev) => {
-          const fresh: Notification[] = newMails.map((m: any) => ({
-            id: m.id,
-            subject: m.subject || "(No subject)",
-            senderEmail: m.senderEmail || "unknown",
-            time: m.time || "",
-            read: false,
-          }))
-          return [...fresh, ...prev].slice(0, 20)
-        })
-        setUnreadCount((prev) => prev + newMails.length)
-      }
-    })
-    return () => { unsub() }
+      setUnreadCount(inbox.filter((m: any) => !m.isRead).length)
+    }
+    updateUnread()
+    const unsub = subscribe(updateUnread)
+    return unsub
   }, [])
 
   useEffect(() => {
+    if (!searchQuery.trim()) {
+      setSearchResults([])
+      setShowResults(false)
+      return
+    }
+
+    const all = getAllRaw()
+    const q = searchQuery.toLowerCase()
+    const filtered = all.filter(m => 
+      m.subject?.toLowerCase().includes(q) ||
+      m.senderEmail?.toLowerCase().includes(q) ||
+      m.receiverEmail?.toLowerCase().includes(q) ||
+      m.message?.toLowerCase().includes(q) ||
+      m.id?.toLowerCase().includes(q) ||
+      m.time?.toLowerCase().includes(q)
+    ).slice(0, 8) // Limit to top 8 for the dropdown
+
+    setSearchResults(filtered.map(m => ({
+      id: m.id,
+      subject: m.subject || "(No Subject)",
+      senderEmail: m.senderEmail,
+      receiverEmail: m.receiverEmail,
+      time: m.time,
+      status: m.status,
+      snippet: m.message?.slice(0, 50) || ""
+    })))
+    setShowResults(true)
+  }, [searchQuery])
+
+  useEffect(() => {
     const handleClick = (e: MouseEvent) => {
-      if (notifRef.current && !notifRef.current.contains(e.target as Node)) {
-        setShowNotifs(false)
-      }
       if (searchRef.current && !searchRef.current.contains(e.target as Node)) {
         setShowResults(false)
         setSearchFocused(false)
@@ -134,424 +128,163 @@ export default function Header({ onToggle, onCompose }: HeaderProps) {
     return () => document.removeEventListener("mousedown", handleClick)
   }, [])
 
-  useEffect(() => {
-    const query = searchQuery.trim().toLowerCase()
-    if (!query || query.length < 2) {
-      setSearchResults([])
-      setShowResults(false)
-      setActiveIndex(-1)
-      return
-    }
-
-    const user = JSON.parse(localStorage.getItem("user") || "{}")
-    const allMails = getAllRaw()
-
-    const results: SearchResult[] = allMails
-      .filter((m: any) => {
-        if (!m || m.status === "purged") return false
-        if (m.receiverEmail !== user.email && m.senderEmail !== user.email) return false
-        return (
-          m.subject?.toLowerCase().includes(query) ||
-          m.senderEmail?.toLowerCase().includes(query) ||
-          m.receiverEmail?.toLowerCase().includes(query) ||
-          m.message?.toLowerCase().includes(query) ||
-          m.time?.toLowerCase().includes(query)
-        )
-      })
-      .slice(0, 8)
-      .map((m: any) => {
-        let snippet = ""
-        if (m.subject?.toLowerCase().includes(query)) {
-          snippet = m.subject
-        } else if (m.senderEmail?.toLowerCase().includes(query)) {
-          snippet = `From: ${m.senderEmail}`
-        } else if (m.receiverEmail?.toLowerCase().includes(query)) {
-          snippet = `To: ${m.receiverEmail}`
-        } else if (m.message?.toLowerCase().includes(query)) {
-          const idx = m.message.toLowerCase().indexOf(query)
-          const start = Math.max(0, idx - 30)
-          snippet = (start > 0 ? "..." : "") + m.message.slice(start, idx + 60) + "..."
-        } else {
-          snippet = m.time || ""
-        }
-        return {
-          id: m.id,
-          subject: m.subject || "(No subject)",
-          senderEmail: m.senderEmail,
-          receiverEmail: m.receiverEmail,
-          time: m.time?.split(",")[0] || "",
-          status: m.status,
-          snippet,
-          isReply: m.isReply,
-          isForward: m.isForward,
-        }
-      })
-
-    setSearchResults(results)
-    setShowResults(results.length > 0)
-    setActiveIndex(-1)
-  }, [searchQuery])
-
-  const handleSearchKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (!showResults) return
-    if (e.key === "ArrowDown") {
-      e.preventDefault()
-      setActiveIndex((prev) => Math.min(prev + 1, searchResults.length - 1))
-    } else if (e.key === "ArrowUp") {
-      e.preventDefault()
-      setActiveIndex((prev) => Math.max(prev - 1, -1))
-    } else if (e.key === "Enter") {
-      e.preventDefault()
-      if (activeIndex >= 0 && searchResults[activeIndex]) {
-        handleResultClick(searchResults[activeIndex])
-      } else if (searchQuery.trim()) {
-        router.push(`/dashboard/inbox?search=${encodeURIComponent(searchQuery.trim())}`)
-        setShowResults(false)
-      }
-    } else if (e.key === "Escape") {
-      setShowResults(false)
-      setSearchQuery("")
-      inputRef.current?.blur()
-    }
-  }
-
   const handleResultClick = (result: SearchResult) => {
     setShowResults(false)
     setSearchQuery("")
-    const folder =
-      result.status === "trash" ? "trash" :
-        result.status === "spam" ? "spam" :
-          result.status === "request" ? "spam" :
-            result.status === "draft" ? "drafts" :
-              result.senderEmail === JSON.parse(localStorage.getItem("user") || "{}").email
-                ? "sent" : "inbox"
-    router.push(`/dashboard/${folder}?highlight=${result.id}`)
-  }
-
-  const getStatusIcon = (result: SearchResult) => {
-    const user = JSON.parse(localStorage.getItem("user") || "{}")
-    if (result.senderEmail === user.email) return "📤"
-    if (result.status === "trash") return "🗑️"
-    if (result.status === "spam") return "🚫"
-    if (result.status === "request") return "📬"
-    if (result.isReply) return "↩️"
-    if (result.isForward) return "↪️"
-    return "📧"
-  }
-
-  const highlightMatch = (text: string, query: string) => {
-    if (!query || !text) return text
-    const idx = text.toLowerCase().indexOf(query.toLowerCase())
-    if (idx === -1) return text
-    return (
-      <>
-        {text.slice(0, idx)}
-        <mark style={{ background: "rgba(212,160,23,0.3)", color: "var(--gold-mid)", borderRadius: "2px", padding: "0 1px" }}>
-          {text.slice(idx, idx + query.length)}
-        </mark>
-        {text.slice(idx + query.length)}
-      </>
-    )
-  }
-
-  const toggleTheme = () => {
-    const newTheme = isDark ? "light" : "dark"
-    setIsDark(!isDark)
-    localStorage.setItem("theme", newTheme)
-    document.documentElement.setAttribute("data-theme", newTheme)
-  }
-
-  const handleRefresh = () => {
-    if (refreshing) return
-    setRefreshing(true)
-    const user = JSON.parse(localStorage.getItem("user") || "{}")
-    if (user.email) {
-      clearStore()
-      initMailStore(user.email)
-      setTimeout(() => {
-        getMails("inbox").forEach((m: any) => seenIdsRef.current.add(m.id))
-      }, 1000)
-    }
-    setTimeout(() => {
-      setRefreshing(false)
-      setRefreshed(true)
-      setTimeout(() => setRefreshed(false), 2000)
-    }, 1200)
-  }
-
-  const markAllRead = () => {
-    setNotifications((prev) => prev.map((n) => ({ ...n, read: true })))
-    setUnreadCount(0)
-  }
-
-  const markOneRead = (id: string) => {
-    setNotifications((prev) =>
-      prev.map((n) => (n.id === id ? { ...n, read: true } : n))
-    )
-    setUnreadCount((prev) => Math.max(0, prev - 1))
-  }
-
-  const clearAll = () => {
-    setNotifications([])
-    setUnreadCount(0)
-    setShowNotifs(false)
+    router.push(`/dashboard/inbox?highlight=${result.id}`)
   }
 
   return (
-    <header className="header">
-      <div className="header-left">
-        <button className="menu-icon" onClick={onToggle}><Menu size={20} /></button>
-
-        <Link href="/dashboard/inbox" style={{ textDecoration: "none", display: "flex", alignItems: "center" }}>
-          <Logo size={32} />
-          <span className="decentralized-badge" style={{
-            fontSize: "8px", fontWeight: "900", letterSpacing: "1px",
-            background: "rgba(212,160,23,0.12)", border: "1px solid rgba(212,160,23,0.35)",
-            color: "var(--gold-mid)", padding: "2px 8px", borderRadius: "5px",
-            marginLeft: "12px", textTransform: "uppercase", height: "fit-content"
-          }}>Decentralized</span>
-        </Link>
+    <header className="header" style={{ height: "72px", borderBottom: "1px solid var(--border-gold)", padding: "0 24px" }}>
+      <div className="header-left" style={{ minWidth: "200px" }}>
+        <Logo size={28} />
       </div>
 
-      {/* ── Global Search ── */}
-      <div className="header-middle">
-        <div ref={searchRef} style={{ position: "relative", width: "100%", maxWidth: "720px" }}>
-          <div
-            className="search-container"
-            style={{
-              border: searchFocused ? "1px solid var(--gold-mid)" : "1px solid transparent",
-              background: searchFocused ? "var(--bg-card)" : "rgba(255,255,255,0.05)",
-              transition: "all 0.2s ease", borderRadius: "8px", 
-              height: "44px", // Slighter, more professional
-              padding: "0 18px"
-            }}
-          >
-            <Search size={18} color="var(--text-dim)" />
+      <div className="header-middle" style={{ flex: 1, display: "flex", justifyContent: "center", position: "relative" }}>
+        <div ref={searchRef} style={{ width: "100%", maxWidth: "580px", position: "relative" }}>
+          <div style={{
+            display: "flex", alignItems: "center",
+            background: "var(--bg-input)", border: "1px solid var(--border-color)",
+            borderRadius: "10px", height: "40px", padding: "0 16px",
+            transition: "all 0.2s ease"
+          }}>
+            <Search size={16} color="var(--text-dim)" />
             <input
+              suppressHydrationWarning={true}
               ref={inputRef}
-              className="search-input"
-              placeholder="Search mail"
+              style={{
+                flex: 1, background: "none", border: "none", outline: "none",
+                color: "var(--text-bright)", fontSize: "14px", marginLeft: "12px",
+                fontFamily: "Inter, sans-serif"
+              }}
+              placeholder="Search mail, contacts, attachments..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              onFocus={() => { setSearchFocused(true); if (searchResults.length > 0) setShowResults(true) }}
-              onKeyDown={handleSearchKeyDown}
-              style={{ flex: 1, fontSize: "15px", marginLeft: "12px" }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  setShowResults(false)
+                  router.push(`/dashboard/inbox?search=${encodeURIComponent(searchQuery)}`)
+                }
+              }}
+              onFocus={() => setSearchFocused(true)}
             />
-            {searchQuery && (
-              <button
-                onClick={() => { setSearchQuery(""); setShowResults(false); inputRef.current?.focus() }}
-                style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-muted)", padding: "0 4px", display: "flex", alignItems: "center" }}
-              ><X size={14} /></button>
-            )}
-          </div>
-
-          {showResults && (
-            <div style={{
-              position: "absolute", top: "calc(100% + 8px)", left: 0, right: 0,
-              background: "var(--bg-panel)", border: "1px solid var(--border-gold)",
-              borderRadius: "14px", overflow: "hidden",
-              boxShadow: "0 8px 32px rgba(0,0,0,0.4)", zIndex: 1000,
-            }}>
-              <div style={{
-                padding: "10px 14px", borderBottom: "1px solid rgba(212,160,23,0.1)",
-                display: "flex", alignItems: "center", justifyContent: "space-between",
-              }}>
-                <span style={{ fontSize: "11px", color: "var(--text-muted)", fontFamily: "Raleway, sans-serif" }}>
-                  {searchResults.length} result{searchResults.length !== 1 ? "s" : ""} for
-                  <strong style={{ color: "var(--gold-mid)", marginLeft: "4px" }}>"{searchQuery}"</strong>
-                </span>
-                <span style={{ fontSize: "10px", color: "var(--text-muted)" }}>
-                  ↑↓ navigate · Enter to open · Esc to close
-                </span>
-              </div>
-
-              {searchResults.map((result, idx) => (
-                <div
-                  key={result.id}
-                  onClick={() => handleResultClick(result)}
-                  style={{
-                    padding: "10px 14px", cursor: "pointer",
-                    borderBottom: "1px solid rgba(212,160,23,0.06)",
-                    background: idx === activeIndex ? "rgba(212,160,23,0.08)" : "none",
-                    transition: "background 0.1s ease",
-                    display: "flex", alignItems: "flex-start", gap: "10px",
-                  }}
-                  onMouseEnter={() => setActiveIndex(idx)}
-                >
-                  <div style={{
-                    width: "30px", height: "30px", borderRadius: "50%", flexShrink: 0,
-                    background: "rgba(212,160,23,0.1)",
-                    display: "flex", alignItems: "center", justifyContent: "center", fontSize: "13px",
-                  }}>{getStatusIcon(result)}</div>
-
-                  <div style={{ flex: 1, overflow: "hidden", minWidth: 0 }}>
-                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "8px" }}>
-                      <span style={{ fontSize: "12px", fontWeight: "700", color: "var(--text-bright)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                        {highlightMatch(result.subject, searchQuery)}
-                      </span>
-                      <span style={{ fontSize: "10px", color: "var(--text-dim)", flexShrink: 0 }}>{result.time}</span>
-                    </div>
-                    <div style={{ fontSize: "11px", color: "var(--text-muted)", marginTop: "2px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                      {highlightMatch(
-                        result.senderEmail === JSON.parse(localStorage.getItem("user") || "{}").email
-                          ? `To: ${result.receiverEmail}` : `From: ${result.senderEmail}`,
-                        searchQuery
-                      )}
-                    </div>
-                    <div style={{ fontSize: "11px", color: "var(--text-dim)", marginTop: "2px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                      {highlightMatch(result.snippet, searchQuery)}
-                    </div>
-                  </div>
-
-                  <span style={{
-                    fontSize: "9px", padding: "2px 7px", borderRadius: "6px",
-                    background: "rgba(212,160,23,0.1)", color: "var(--gold-mid)",
-                    border: "1px solid rgba(212,160,23,0.2)",
-                    fontFamily: "Raleway, sans-serif", fontWeight: "700",
-                    flexShrink: 0, alignSelf: "center", textTransform: "capitalize",
-                  }}>
-                    {result.status === "request" ? "Requests"
-                      : result.senderEmail === JSON.parse(localStorage.getItem("user") || "{}").email
-                        ? "Sent" : result.status === "inbox" ? "Inbox" : result.status}
-                  </span>
-                </div>
-              ))}
-
-              {searchResults.length === 0 && searchQuery.length >= 2 && (
-                <div style={{ padding: "24px", textAlign: "center", color: "var(--text-muted)", fontSize: "13px" }}>
-                  <div style={{ fontSize: "28px", marginBottom: "8px" }}>🔍</div>
-                  No results for "{searchQuery}"
-                </div>
-              )}
+            <div style={{ color: "var(--text-dim)", fontSize: "11px", fontWeight: "600", letterSpacing: "1px" }}>
+              ⌘ K
             </div>
+          </div>
+          
+          {showResults && searchResults.length > 0 && (
+             <div style={{
+               position: "absolute", top: "calc(100% + 8px)", left: 0, right: 0,
+               background: "var(--bg-card)", border: "1px solid var(--border-color)",
+               borderRadius: "10px", overflow: "hidden", zIndex: 1000,
+               boxShadow: "var(--shadow-deep)"
+             }}>
+               {searchResults.map((r) => (
+                 <div 
+                   key={r.id} 
+                   onClick={() => handleResultClick(r)}
+                   style={{ padding: "12px 16px", cursor: "pointer", borderBottom: "1px solid #1F1F1F" }}
+                 >
+                   <div style={{ fontSize: "13px", color: "var(--text-bright)", fontWeight: "600" }}>{r.subject}</div>
+                   <div style={{ fontSize: "11px", color: "var(--text-dim)" }}>{r.senderEmail}</div>
+                 </div>
+               ))}
+             </div>
           )}
         </div>
       </div>
 
-      <div className="header-right" style={{ display: "flex", alignItems: "center", gap: "12px" }}>
-
-
-
-        {/* Refresh */}
-        <button
-          onClick={handleRefresh} disabled={refreshing} title="Refresh mail"
-          style={{
-            background: "none", border: "1px solid var(--border-gold)",
-            borderRadius: "8px", padding: "6px 10px",
-            cursor: refreshing ? "not-allowed" : "pointer",
-            color: refreshed ? "#4caf6e" : "var(--text-bright)",
-            fontSize: "14px", display: "flex", alignItems: "center", gap: "6px",
-            opacity: refreshing ? 0.7 : 1, transition: "all 0.2s ease",
-          }}
-        >
-          <RefreshCw size={16} style={{ color: refreshed ? "#4caf6e" : "var(--text-bright)", animation: refreshing ? "spin 0.8s linear infinite" : "none" }} />
-          <span style={{ fontSize: "11px", fontFamily: "Raleway, sans-serif", fontWeight: "600" }}>
-            {refreshing ? "Refreshing..." : refreshed ? "Done" : "Refresh"}
+      <div className="header-right" style={{ 
+        flex: 1, 
+        display: "flex", 
+        justifyContent: "flex-end", 
+        alignItems: "center", 
+        gap: "24px",
+        paddingLeft: "20px"
+      }}>
+        
+        {/* Node Status Badge */}
+        <div style={{
+          display: "flex", alignItems: "center", gap: "8px",
+          background: "var(--bg-hover)", border: "1px solid var(--border-gold)",
+          padding: "6px 14px", borderRadius: "10px",
+          transition: "all 0.3s ease",
+          marginRight: "4px" // Extra push to prevent toggle overlap
+        }}>
+          <div style={{
+            width: "7px", height: "7px", borderRadius: "50%",
+            background: nodeStatus === "active" ? "var(--gold-mid)" : "#E84234",
+            boxShadow: nodeStatus === "active" ? "0 0 10px var(--gold-mid)" : "none"
+          }} />
+          <span style={{ 
+            fontSize: "11px", fontWeight: "800", color: "var(--gold-mid)", 
+            letterSpacing: "0.5px", textTransform: "uppercase" 
+          }}>
+            {nodeStatus === "active" ? "Active" : "Syncing"}
           </span>
-        </button>
-
-        {/* Notifications */}
-        <div ref={notifRef} style={{ position: "relative" }}>
-          <button
-            onClick={() => { setShowNotifs((prev) => !prev); if (!showNotifs && unreadCount > 0) markAllRead() }}
-            title="Notifications"
-            style={{
-              background: "none", border: "1px solid var(--border-gold)",
-              borderRadius: "8px", padding: "6px 10px", cursor: "pointer",
-              color: "var(--text-bright)", position: "relative",
-              display: "flex", alignItems: "center", transition: "all 0.2s ease",
-            }}
-          >
-            <Bell size={18} />
-            {unreadCount > 0 && (
-              <span style={{
-                position: "absolute", top: "-6px", right: "-6px",
-                background: "linear-gradient(135deg, #c0392b, #8b1a1a)",
-                color: "#fff", fontSize: "9px", fontWeight: "800",
-                padding: "2px 5px", borderRadius: "10px",
-                minWidth: "16px", textAlign: "center", lineHeight: "1.4",
-              }}>{unreadCount > 99 ? "99+" : unreadCount}</span>
-            )}
-          </button>
-
-          {showNotifs && (
-            <div style={{
-              position: "absolute", top: "calc(100% + 10px)", right: 0,
-              width: "320px", maxHeight: "420px",
-              background: "var(--bg-panel)", border: "1px solid var(--border-gold)",
-              borderRadius: "14px", overflow: "hidden",
-              boxShadow: "0 8px 32px rgba(0,0,0,0.4)",
-              zIndex: 1000, display: "flex", flexDirection: "column",
-            }}>
-              <div style={{
-                padding: "12px 16px", borderBottom: "1px solid var(--border-gold)",
-                display: "flex", alignItems: "center", justifyContent: "space-between",
-              }}>
-                <span style={{ fontSize: "13px", fontWeight: "800", color: "var(--text-bright)", fontFamily: "Raleway, sans-serif" }}>
-                  🔔 Notifications
-                </span>
-                <div style={{ display: "flex", gap: "8px" }}>
-                  {notifications.length > 0 && (
-                    <>
-                      <button onClick={markAllRead} style={{ background: "none", border: "none", cursor: "pointer", fontSize: "10px", color: "var(--gold-mid)", fontFamily: "Raleway, sans-serif", fontWeight: "600" }}>Mark all read</button>
-                      <button onClick={clearAll} style={{ background: "none", border: "none", cursor: "pointer", fontSize: "10px", color: "var(--text-muted)", fontFamily: "Raleway, sans-serif" }}>Clear all</button>
-                    </>
-                  )}
-                </div>
-              </div>
-
-              <div style={{ overflowY: "auto", flex: 1 }}>
-                {notifications.length === 0 ? (
-                  <div style={{ padding: "32px 16px", textAlign: "center", color: "var(--text-muted)", fontSize: "13px" }}>
-                    <div style={{ fontSize: "32px", marginBottom: "8px" }}>🔔</div>
-                    No new notifications
-                  </div>
-                ) : (
-                  notifications.map((notif) => (
-                    <div
-                      key={notif.id}
-                      onClick={() => markOneRead(notif.id)}
-                      style={{
-                        padding: "12px 16px", borderBottom: "1px solid rgba(212,160,23,0.08)",
-                        background: notif.read ? "none" : "rgba(212,160,23,0.05)",
-                        cursor: "pointer", transition: "background 0.15s ease",
-                        display: "flex", gap: "10px", alignItems: "flex-start",
-                      }}
-                    >
-                      <div style={{
-                        width: "7px", height: "7px", borderRadius: "50%",
-                        flexShrink: 0, marginTop: "5px",
-                        background: notif.read ? "transparent" : "var(--gold-mid)",
-                      }} />
-                      <div style={{ flex: 1, overflow: "hidden" }}>
-                        <div style={{ fontSize: "12px", fontWeight: notif.read ? "500" : "700", color: "var(--text-bright)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                          {notif.subject}
-                        </div>
-                        <div style={{ fontSize: "11px", color: "var(--text-muted)", marginTop: "2px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                          From: {notif.senderEmail}
-                        </div>
-                        <div style={{ fontSize: "10px", color: "var(--text-dim)", marginTop: "2px" }}>
-                          {notif.time}
-                        </div>
-                      </div>
-                    </div>
-                  ))
-                )}
-              </div>
-            </div>
-          )}
         </div>
 
-        {/* Theme toggle */}
-        <button
-          onClick={toggleTheme} className="theme-toggle"
-          title={isDark ? "Switch to Light Mode" : "Switch to Dark Mode"}
+        {/* Theme Toggle Button */}
+        <button 
+          className="theme-toggle"
+          onClick={() => {
+            const newTheme = !isDark
+            setIsDark(newTheme)
+            localStorage.setItem("theme", newTheme ? "dark" : "light")
+            document.documentElement.setAttribute("data-theme", newTheme ? "dark" : "light")
+          }}
+          style={{ 
+            padding: "4px", borderRadius: "50%", transition: "background 0.2s",
+            flexShrink: 0 // Prevent shrinking
+          }}
+          onMouseOver={(e) => (e.currentTarget.style.background = "var(--bg-hover)")}
+          onMouseOut={(e) => (e.currentTarget.style.background = "none")}
+          title={`Switch to ${isDark ? "Light" : "Dark"} Mode`}
         >
-          {isDark ? <Moon size={18} /> : <Sun size={18} />}
+          <div className="toggle-track">
+            <span className="toggle-icon-left">
+              <Moon size={14} color="var(--text-muted)" />
+            </span>
+            <div className={`toggle-thumb ${isDark ? "left" : "right"}`} />
+            <span className="toggle-icon-right">
+              <Sun size={14} color="var(--text-muted)" />
+            </span>
+          </div>
         </button>
 
-
-
+        <button 
+          className="header-icon-btn"
+          style={{ 
+            background: "rgba(255, 255, 255, 0.04)", 
+            border: "1px solid rgba(255, 255, 255, 0.02)", 
+            cursor: "pointer", 
+            color: "var(--text-muted)", position: "relative",
+            width: "36px", height: "36px", borderRadius: "10px",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            transition: "all 0.2s ease"
+          }}
+          onMouseOver={(e) => {
+            e.currentTarget.style.background = "rgba(255, 255, 255, 0.08)";
+          }}
+          onMouseOut={(e) => {
+            e.currentTarget.style.background = "rgba(255, 255, 255, 0.04)";
+          }}
+        >
+          <span style={{ fontSize: "16px", filter: "drop-shadow(0 2px 4px rgba(0,0,0,0.4))", transform: "translateY(-1px)" }}>🔔</span>
+          {unreadCount > 0 && (
+            <div style={{
+              position: "absolute", top: "-4px", right: "-4px",
+              minWidth: "18px", height: "18px", borderRadius: "9px",
+              background: "#D93025", border: "2px solid var(--bg-header)",
+              color: "#FFF", fontSize: "10px", fontWeight: "800",
+              display: "flex", alignItems: "center", justifyContent: "center",
+              padding: "0 4px", boxShadow: "0 2px 4px rgba(0,0,0,0.3)"
+            }}>
+              {unreadCount > 99 ? "99+" : unreadCount}
+            </div>
+          )}
+        </button>
         <div ref={accountRef} style={{ position: "relative" }}>
           <button
             onClick={() => {
@@ -559,32 +292,22 @@ export default function Header({ onToggle, onCompose }: HeaderProps) {
               setAccountCount(getSavedAccounts().length)
             }}
             title="Switch account"
-            style={{ background: "none", border: "none", cursor: "pointer", padding: "0", position: "relative" }}
+            style={{ 
+              background: "none", border: "none", cursor: "pointer", padding: "0", 
+              position: "relative", display: "flex", alignItems: "center" 
+            }}
           >
             <div style={{
-              width: "34px", height: "34px", borderRadius: "50%",
+              width: "32px", height: "32px", borderRadius: "50%",
               background: currentUser.email
                 ? getAvatarColor(currentUser.email)
                 : "linear-gradient(135deg, var(--gold-rich), var(--gold-light))",
               display: "flex", alignItems: "center", justifyContent: "center",
-              fontSize: "14px", fontWeight: "800", color: "#fff",
-              border: showAccountSwitcher ? "2px solid var(--gold-mid)" : "2px solid var(--border-gold)",
-              transition: "border 0.2s ease",
-              boxShadow: showAccountSwitcher ? "0 0 0 3px rgba(212,160,23,0.2)" : "none",
+              fontSize: "12px", fontWeight: "800", color: "var(--bg-body)",
+              marginLeft: "8px", border: showAccountSwitcher ? "2px solid var(--gold-mid)" : "1px solid var(--border-color)"
             }}>
-              {(currentUser.name || currentUser.email || "U").charAt(0).toUpperCase()}
+              {(currentUser.email || "U").charAt(0).toUpperCase()}
             </div>
-
-            {accountCount > 1 && (
-              <span style={{
-                position: "absolute", bottom: "-2px", right: "-2px",
-                width: "14px", height: "14px", borderRadius: "50%",
-                background: "linear-gradient(135deg, var(--gold-rich), var(--gold-light))",
-                color: "#000", fontSize: "8px", fontWeight: "800",
-                display: "flex", alignItems: "center", justifyContent: "center",
-                border: "1px solid var(--bg-panel)",
-              }}>{accountCount}</span>
-            )}
           </button>
 
           {showAccountSwitcher && (
@@ -595,3 +318,5 @@ export default function Header({ onToggle, onCompose }: HeaderProps) {
     </header>
   )
 }
+
+export default memo(Header)

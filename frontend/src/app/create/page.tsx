@@ -2,6 +2,7 @@
 
 import { useState } from "react"
 import CryptoJS from "crypto-js"
+import Logo from "@/components/Logo"
 
 export default function Create(){
 
@@ -36,51 +37,49 @@ export default function Create(){
     window.location.href = "/login"
   }
 
-  return(
+  return (
+    <div className="page-center">
+      <div className="auth-card">
+        <div className="auth-header">
+          <Logo size={48} layout="horizontal" showText={true} />
+          <div className="auth-header-content">
+            <h2 className="auth-title">
+              Create Account
+            </h2>
+            <p className="auth-subtitle">
+              Quickly create a decentralized identity
+            </p>
+          </div>
+        </div>
 
-    <div style={{
-      maxWidth:"400px",
-      margin:"auto",
-      marginTop:"120px",
-      padding:"30px",
-      border:"1px solid #eee",
-      borderRadius:"10px",
-      boxShadow:"0 4px 10px rgba(0,0,0,0.1)"
-    }}>
+        <div className="auth-form">
+          <input
+            className="auth-input"
+            placeholder="Name"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+          />
 
-      <h2>Create Account</h2>
+          <input
+            className="auth-input"
+            placeholder="Password"
+            type="password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+          />
 
-      <input
-        placeholder="Name"
-        value={name}
-        onChange={(e)=>setName(e.target.value)}
-        style={{width:"100%",marginTop:"20px",padding:"10px"}}
-      />
-
-      <input
-        placeholder="Password"
-        type="password"
-        value={password}
-        onChange={(e)=>setPassword(e.target.value)}
-        style={{width:"100%",marginTop:"10px",padding:"10px"}}
-      />
-
-      <button
-        onClick={createAccount}
-        style={{
-          marginTop:"20px",
-          width:"100%",
-          padding:"10px",
-          background:"#2563eb",
-          color:"white",
-          border:"none",
-          borderRadius:"5px",
-          cursor:"pointer"
-        }}
-      >
-        Create Account
-      </button>
-
+          <div className="auth-button-row">
+            <button
+              onClick={() => window.location.href = "/login"}
+              style={{ background: "none", border: "none", color: "var(--gold-mid)", fontWeight: "500", cursor: "pointer", fontFamily: "Raleway, sans-serif" }}
+            >← Sign in</button>
+            <button
+              className="btn"
+              onClick={createAccount}
+            >Create Account</button>
+          </div>
+        </div>
+      </div>
     </div>
   )
 }

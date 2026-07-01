@@ -1,6 +1,7 @@
 import net from 'net';
 import Gun from 'gun';
 import * as openpgp from 'openpgp'; 
+import CryptoJS from 'crypto-js';
 
 // ── Configuration ──
 const POP3_PORT = 1110;
@@ -24,7 +25,23 @@ const fetchUserMails = async (email, password) => {
                 return resolve(null);
             }
 
-            const privKeyArmored = user.privateKey;
+            const encryptedPrivKey = user.privateKey;
+            let privKeyArmored = encryptedPrivKey;
+
+            // 🛡️ [Vault Decryption]
+            // If the key is encrypted with CryptoJS (Vault Strategy), decrypt it first.
+            try {
+                if (encryptedPrivKey && !encryptedPrivKey.includes("-----BEGIN PGP PRIVATE KEY BLOCK-----")) {
+                    const bytes = CryptoJS.AES.decrypt(encryptedPrivKey, password);
+                    const decrypted = bytes.toString(CryptoJS.enc.Utf8);
+                    if (decrypted.includes("-----BEGIN PGP PRIVATE KEY BLOCK-----")) {
+                        privKeyArmored = decrypted;
+                        console.log(`🔑 [POP3] Vault decrypted for ${cleanEmail}`);
+                    }
+                }
+            } catch (e) {
+                console.warn(`⚠️ [POP3] Vault decryption failed for ${cleanEmail}:`, e.message);
+            }
             
             // 2. Fetch Mails from Index
             gun.get(`user_mail_index:${cleanEmail}`).map().once(async (mail) => {
