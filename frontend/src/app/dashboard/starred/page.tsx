@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState, useMemo, useRef } from "react"
+import { useEffect, useState, useMemo, useRef, Suspense } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { decryptMessage, db, cleanMessage } from "@/utils/gun"
 import { Star, Trash2, Mail, Reply, Forward, Lock, Search, ArrowLeft, Paperclip, Send, RefreshCw, Check, Tag } from "lucide-react"
@@ -9,7 +9,7 @@ import { getLabels, getMailLabels, toggleMailLabel, subscribeLabelStore, type La
 import { useLabel } from "@/context/LabelContext"
 import MailRow from "@/components/MailRow"
 
-export default function StarredPage() {
+function StarredPageContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const urlSearch = searchParams.get("search") || ""
@@ -325,4 +325,13 @@ export default function StarredPage() {
       {renderDetailView()}
     </div>
   )
+}
+
+
+export default function StarredPage() {
+  return (
+    <Suspense fallback={null}>
+      <StarredPageContent />
+    </Suspense>
+  );
 }

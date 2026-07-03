@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState, useMemo } from "react"
+import { useEffect, useState, useMemo, Suspense } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { decryptMessage } from "@/utils/gun"
 import { Star, Trash2, ArrowLeft, RefreshCw, UserCheck, Search, Check, ShieldCheck } from "lucide-react"
@@ -8,7 +8,7 @@ import { subscribe, updateMailInStore, getMails, initMailStore } from "@/utils/m
 import { trustSender } from "@/utils/spamFilter"
 import MailRow from "@/components/MailRow"
 
-export default function RequestsPage() {
+function RequestsPageContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const urlSearch = searchParams.get("search") || ""
@@ -324,4 +324,13 @@ export default function RequestsPage() {
       {renderDetailView()}
     </div>
   )
+}
+
+
+export default function RequestsPage() {
+  return (
+    <Suspense fallback={null}>
+      <RequestsPageContent />
+    </Suspense>
+  );
 }

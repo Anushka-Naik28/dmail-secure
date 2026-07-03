@@ -1,13 +1,13 @@
 "use client"
 
-import { useEffect, useState, useMemo, useRef } from "react"
+import { useEffect, useState, useMemo, useRef, Suspense } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { decryptMessage, db, cleanMessage } from "@/utils/gun"
 import { Star, Trash2, Mail, Lock, Search, ArrowLeft, RefreshCw, Inbox, AlertTriangle, Check } from "lucide-react"
 import { subscribe, updateMailInStore, getMails, initMailStore } from "@/utils/mailStore"
 import MailRow from "@/components/MailRow"
 
-export default function TrashPage() {
+function TrashPageContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const urlSearch = searchParams.get("search") || ""
@@ -259,4 +259,13 @@ export default function TrashPage() {
       {renderDetailView()}
     </div>
   )
+}
+
+
+export default function TrashPage() {
+  return (
+    <Suspense fallback={null}>
+      <TrashPageContent />
+    </Suspense>
+  );
 }

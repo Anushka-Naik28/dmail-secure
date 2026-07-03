@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState, useMemo, useRef, memo } from "react"
+import { useEffect, useState, useMemo, useRef, memo, Suspense } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { decryptMessage, encryptMessage, db, cleanMessage, decryptVaultKey, derivePGPPassphrase, validatePGPHeader, getOpenPGP } from "@/utils/gun"
 import { Star, MoreVertical, Archive, Trash2, Mail, Send, Reply, Forward, Shield, Lock, Bell, Settings, Search, ArrowLeft, Paperclip, Tag, Check, Eye, EyeOff, RefreshCw } from "lucide-react"
@@ -12,7 +12,7 @@ import MailRow from "@/components/MailRow"
 
 type Tab = "All" | "Unread" | "Starred"
 
-export default function InboxPage() {
+function InboxPageContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const urlSearch = searchParams.get("search") || ""
@@ -829,4 +829,13 @@ export default function InboxPage() {
       {renderDetailView()}
     </div>
   )
+}
+
+
+export default function InboxPage() {
+  return (
+    <Suspense fallback={null}>
+      <InboxPageContent />
+    </Suspense>
+  );
 }

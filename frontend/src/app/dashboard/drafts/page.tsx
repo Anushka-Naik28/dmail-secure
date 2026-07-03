@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState, useMemo, useRef } from "react"
+import { useEffect, useState, useMemo, useRef, Suspense } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { cleanMessage } from "@/utils/gun"
 import { Star, Trash2, Mail, Edit3, Lock, Search, ArrowLeft, Paperclip, Send, RefreshCw, Check } from "lucide-react"
@@ -13,7 +13,7 @@ interface Draft {
   savedAt: string
 }
 
-export default function DraftsPage() {
+function DraftsPageContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const urlSearch = searchParams.get("search") || ""
@@ -359,4 +359,13 @@ export default function DraftsPage() {
       {renderDetailView()}
     </div>
   )
+}
+
+
+export default function DraftsPage() {
+  return (
+    <Suspense fallback={null}>
+      <DraftsPageContent />
+    </Suspense>
+  );
 }

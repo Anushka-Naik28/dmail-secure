@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState, useMemo, useRef } from "react"
+import { useEffect, useState, useMemo, useRef, Suspense } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { decryptMessage, db, cleanMessage } from "@/utils/gun"
 import { Star, Trash2, Mail, Lock, Search, ArrowLeft, RefreshCw, ShieldAlert, CheckCircle, XCircle, Inbox, Tag, Check, ShieldCheck } from "lucide-react"
@@ -11,7 +11,7 @@ import { useLabel } from "@/context/LabelContext"
 import MailRow from "@/components/MailRow"
 
 
-export default function SpamPage() {
+function SpamPageContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const urlSearch = searchParams.get("search") || ""
@@ -350,4 +350,13 @@ export default function SpamPage() {
       {renderDetailView()}
     </div>
   )
+}
+
+
+export default function SpamPage() {
+  return (
+    <Suspense fallback={null}>
+      <SpamPageContent />
+    </Suspense>
+  );
 }

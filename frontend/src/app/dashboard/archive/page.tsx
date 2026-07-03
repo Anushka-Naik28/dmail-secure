@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState, useMemo, useRef } from "react"
+import { useEffect, useState, useMemo, useRef, Suspense } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { decryptMessage, db, cleanMessage } from "@/utils/gun"
 import { Star, Trash2, Mail, Reply, Forward, Lock, Search, ArrowLeft, Paperclip, Send, RefreshCw, Archive, Inbox, Check, Tag } from "lucide-react"
@@ -11,7 +11,7 @@ import MailRow from "@/components/MailRow"
 
 type Tab = "All" | "Unread"
 
-export default function ArchivePage() {
+function ArchivePageContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const urlSearch = searchParams.get("search") || ""
@@ -414,4 +414,13 @@ export default function ArchivePage() {
       {renderDetailView()}
     </div>
   )
+}
+
+
+export default function ArchivePage() {
+  return (
+    <Suspense fallback={null}>
+      <ArchivePageContent />
+    </Suspense>
+  );
 }
