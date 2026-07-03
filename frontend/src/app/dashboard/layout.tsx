@@ -1,6 +1,6 @@
 "use client"
 import dynamic from "next/dynamic"
-import { useState, useEffect, useRef } from "react"
+import { useState, useEffect, useRef, Suspense } from "react"
 import { usePathname } from "next/navigation"
 import Header from "@/components/Header"
 import Sidebar from "@/components/Sidebar"
@@ -194,7 +194,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               height: "100%", overflow: "hidden"
             }}
           >
-            {children}
+            <Suspense fallback={null}>
+              {children}
+            </Suspense>
           </main>
         </div>
 
