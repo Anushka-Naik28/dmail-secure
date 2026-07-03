@@ -19,7 +19,7 @@ if (typeof window !== "undefined") {
         lib.config.use_native = false;
       }
     }
-  }).catch(() => {});
+  }).catch(() => { });
 }
 
 // ── Proof-of-Work ─────────────────────────────────────────────
@@ -86,7 +86,7 @@ const reportedWarnings = new Set<string>();
 // All devices on the same network MUST connect to the same backend relay.
 const getPeers = (): string[] => {
   const peers = new Set<string>();
-  
+
   if (typeof window !== "undefined") {
     const hostname = window.location.hostname;
     const protocol = window.location.protocol === "https:" ? "https:" : "http:";
@@ -95,32 +95,28 @@ const getPeers = (): string[] => {
       // Local development: only connect to local server to avoid unnecessary WebSocket errors
       peers.add(`http://127.0.0.1:8765/gun`);
     } else {
-      // Network/LAN deployment:
-      // 1. [Primary] LAN Master Relay — shared by all devices on the network
-      peers.add(`http://${MASTER_IP}:8765/gun`);
-
-      // 2. [Local] The relay that served the frontend (for remote access scenarios)
-      peers.add(`${protocol}//${hostname}:8765/gun`);
+      // Production Relay deployment:
+      peers.add(`https://dmail-relay.onrender.com/gun`);
     }
 
     // 3. [Discovery] Previously successful relays
     const discovered = localStorage.getItem("dmail_discovered_relay");
     if (discovered) peers.add(discovered);
   }
-  
+
   return Array.from(peers);
 }
 
-export const gun = (typeof window !== "undefined") 
+export const gun = (typeof window !== "undefined")
   ? Gun({
-      peers: getPeers(),
-      localStorage: false,
-      radisk: true,
-    })
+    peers: getPeers(),
+    localStorage: false,
+    radisk: true,
+  })
   : {
-      get: () => ({ get: () => ({ put: () => ({ on: () => {} }), on: () => {} }), put: () => {}, on: () => {} }),
-      on: () => {},
-    } as any
+    get: () => ({ get: () => ({ put: () => ({ on: () => { } }), on: () => { } }), put: () => { }, on: () => { } }),
+    on: () => { },
+  } as any
 
 // ── Connection status ─────────────────────────────────────────
 let connectedPeers = new Set<string>()
@@ -144,11 +140,11 @@ export const checkGunServer = async (): Promise<{ reachable: boolean; url: strin
   const currentHost = typeof window !== "undefined" ? window.location.hostname : MASTER_IP
   const currentProtocol = typeof window !== "undefined" ? window.location.protocol : "http:"
   const localUrl = `${currentProtocol}//${currentHost}:8765/gun`
-  
+
   if (count > 0 || gunConnected) {
     return { reachable: true, url: localUrl, peers: count || 1 }
   }
-  
+
   // Explicitly check for discovered relays if the default is down
   const discovered = typeof window !== "undefined" ? localStorage.getItem("dmail_discovered_relay") : null;
   const testUrl = discovered || localUrl;
@@ -157,8 +153,8 @@ export const checkGunServer = async (): Promise<{ reachable: boolean; url: strin
   try {
     const health = await fetch(`${testUrl.replace("/gun", "/health")}`).then(r => r.json())
     if (health.status === "ok") {
-       console.log("📡 [Sync] Discovered relay reachable. Handshaking...")
-       return { reachable: true, url: testUrl, peers: 0 }
+      console.log("📡 [Sync] Discovered relay reachable. Handshaking...")
+      return { reachable: true, url: testUrl, peers: 0 }
     }
   } catch (e) {
     console.warn("📡 [Sync] Primary relay unreachable:", testUrl)
@@ -183,46 +179,46 @@ export const startRelayDiscovery = () => {
   const isPotentialHost = host === "localhost" || host === "127.0.0.1" || host === MASTER_IP;
 
   if (isPotentialHost) {
-     const announceRelay = async () => {
-        // Only announce if we can actually reach the local GunDB relay on port 8765
-        try {
-           const protocol = window.location.protocol === "https:" ? "https:" : "http:";
-           const relayUrl = `${protocol}//${window.location.hostname}:8765/gun`;
-           
-           // Simple ping to verify the relay is running on this machine
-           const health = await fetch(`${protocol}//${window.location.hostname}:8765/health`, { 
-              signal: AbortSignal.timeout(2000) 
-           }).catch(() => null);
+    const announceRelay = async () => {
+      // Only announce if we can actually reach the local GunDB relay on port 8765
+      try {
+        const protocol = window.location.protocol === "https:" ? "https:" : "http:";
+        const relayUrl = `${protocol}//${window.location.hostname}:8765/gun`;
 
-           if (health && health.ok) {
-              console.log("🛰️ [Discovery] Relay confirmed at:", relayUrl);
-              gun.get("dmail_active_relays").get("primary_master").put({ 
-                 url: relayUrl, 
-                 timestamp: Date.now() 
-              });
-           }
-        } catch (e) {
-           // Not a relay host, just a client
+        // Simple ping to verify the relay is running on this machine
+        const health = await fetch(`${protocol}//${window.location.hostname}:8765/health`, {
+          signal: AbortSignal.timeout(2000)
+        }).catch(() => null);
+
+        if (health && health.ok) {
+          console.log("🛰️ [Discovery] Relay confirmed at:", relayUrl);
+          gun.get("dmail_active_relays").get("primary_master").put({
+            url: relayUrl,
+            timestamp: Date.now()
+          });
         }
-     };
-     setTimeout(announceRelay, 5000); 
-     setInterval(announceRelay, 120000); 
+      } catch (e) {
+        // Not a relay host, just a client
+      }
+    };
+    setTimeout(announceRelay, 5000);
+    setInterval(announceRelay, 120000);
   }
 
   // DISCOVER: Listen for active relay announcements from others
   gun.get("dmail_active_relays").get("primary_master").on((data: any) => {
-     if (data?.url) {
-        const age = Date.now() - (data.timestamp || 0);
-        if (age < 600000) { // 10 mins
-           const currentDiscovered = localStorage.getItem("dmail_discovered_relay");
-           if (data.url !== currentDiscovered) {
-              console.log("🛰️ [Discovery] Found active master relay in mesh:", data.url);
-              localStorage.setItem("dmail_discovered_relay", data.url);
-              // Force a page reload or a GunDB peer update? 
-              // GunDB usually handles new peers if we add them to the options, but for now we'll just cache it.
-           }
+    if (data?.url) {
+      const age = Date.now() - (data.timestamp || 0);
+      if (age < 600000) { // 10 mins
+        const currentDiscovered = localStorage.getItem("dmail_discovered_relay");
+        if (data.url !== currentDiscovered) {
+          console.log("🛰️ [Discovery] Found active master relay in mesh:", data.url);
+          localStorage.setItem("dmail_discovered_relay", data.url);
+          // Force a page reload or a GunDB peer update? 
+          // GunDB usually handles new peers if we add them to the options, but for now we'll just cache it.
         }
-     }
+      }
+    }
   });
 }
 
@@ -253,8 +249,8 @@ export const derivePGPPassphrase = (password: string): string => {
  */
 export const validatePGPHeader = (keyBlock: string): boolean => {
   if (!keyBlock) return false;
-  return keyBlock.includes("-----BEGIN PGP PRIVATE KEY BLOCK-----") && 
-         keyBlock.includes("-----END PGP PRIVATE KEY BLOCK-----");
+  return keyBlock.includes("-----BEGIN PGP PRIVATE KEY BLOCK-----") &&
+    keyBlock.includes("-----END PGP PRIVATE KEY BLOCK-----");
 }
 
 
@@ -356,13 +352,13 @@ export const getOpenPGP = async () => {
           openpgp.config.use_native = false;
           openpgp.config.use_native_hw = false;
           openpgp.config.use_web_worker = false;
-          
+
           // OpenPGP v6 specific
           if (openpgp.config.hasOwnProperty('useEllipticFallback')) {
             openpgp.config.useEllipticFallback = true;
           }
         }
-        
+
         if (!reportedWarnings.has("bridge-active")) {
           console.info("🛡️ Bridge Active: Bypassing browser-enforced WebCrypto restrictions via JS fallback.");
           reportedWarnings.add("bridge-active")
@@ -389,7 +385,7 @@ export const generateKeyPair = async (name: string, email: string, password: str
   try {
     console.log("⚡ Starting Key Generation for:", email)
     const openpgp = await getOpenPGP()
-    
+
     const { privateKey, publicKey } = await openpgp.generateKey({
       type: "ecc",
       curve: "curve25519",
@@ -397,7 +393,7 @@ export const generateKeyPair = async (name: string, email: string, password: str
       passphrase: password,
       format: "armored"
     })
-    
+
     if (!privateKey || !publicKey) {
       throw new Error("PGP_GEN_EMPTY: Keys returned were empty or undefined")
     }
@@ -419,7 +415,7 @@ export const generateDID = async (publicKeyArmored: string): Promise<string> => 
   // We prioritize a stable DID that doesn't change even if PGP keys are repaired.
   const user = typeof window !== "undefined" ? JSON.parse(localStorage.getItem("user") || "{}") : null;
   if (user && user.did && user.publicKey === publicKeyArmored) {
-     return user.did;
+    return user.did;
   }
 
   if (!publicKeyArmored || !publicKeyArmored.includes("-----BEGIN PGP PUBLIC KEY BLOCK-----")) {
@@ -444,13 +440,13 @@ export const generateDID = async (publicKeyArmored: string): Promise<string> => 
 export const sanitizeArmoredKey = (key: string): string => {
   if (!key) return ""
   let cleaned = key.trim()
-  
+
   // Basic validation that markers exist
-  if (!cleaned.includes("-----BEGIN PGP PUBLIC KEY BLOCK-----") || 
-      !cleaned.includes("-----END PGP PUBLIC KEY BLOCK-----")) {
+  if (!cleaned.includes("-----BEGIN PGP PUBLIC KEY BLOCK-----") ||
+    !cleaned.includes("-----END PGP PUBLIC KEY BLOCK-----")) {
     console.warn("⚠️ PGP Key missing markers - possible corruption")
   }
-  
+
   // Remove any leading/trailing garbage that might have been picked up during transport
   const match = cleaned.match(/-----BEGIN PGP PUBLIC KEY BLOCK-----[\s\S]+?-----END PGP PUBLIC KEY BLOCK-----/)
   return match ? match[0] : cleaned
@@ -464,7 +460,7 @@ export const isKeyValid = async (armoredKey: string): Promise<boolean> => {
     const openpgp = await getOpenPGP()
     const sanitized = sanitizeArmoredKey(armoredKey)
     const key = await openpgp.readKey({ armoredKey: sanitized })
-    
+
     // Ensure the key has at least one valid identity binding (self-signature)
     const ids = key.getUserIDs()
     if (ids.length === 0) return false
@@ -474,12 +470,12 @@ export const isKeyValid = async (armoredKey: string): Promise<boolean> => {
     const origDebug = console.debug;
     const origWarn = console.warn;
     const origError = console.error;
-    
+
     // Suppress OpenPGP WebCrypto fallback warnings to prevent Next.js dev overlay triggers
-    console.debug = () => {}; 
-    console.warn = () => {};
-    console.error = () => {};
-    
+    console.debug = () => { };
+    console.warn = () => { };
+    console.error = () => { };
+
     try {
       await openpgp.encrypt({
         message: await openpgp.createMessage({ text: "health-check" }),
@@ -511,14 +507,14 @@ export const isKeyValid = async (armoredKey: string): Promise<boolean> => {
 export const repairPublicKeyFromPrivate = async (privateKeyArmored: string, password?: string): Promise<string | null> => {
   try {
     const openpgp = await getOpenPGP()
-    const privKey = await openpgp.readPrivateKey({ 
-      armoredKey: password ? decryptVaultKey(privateKeyArmored, password) : privateKeyArmored 
+    const privKey = await openpgp.readPrivateKey({
+      armoredKey: password ? decryptVaultKey(privateKeyArmored, password) : privateKeyArmored
     })
-    
+
     // Extract the public key packets from the private key
     // This maintains all subkeys and user IDs but ensures the armor is complete.
     const pubKey = privKey.toPublic()
-    
+
     return pubKey.armor()
   } catch (err) {
     console.error("❌ Local Identity Repair Failed:", err)
@@ -547,8 +543,8 @@ const cachePubKey = (email: string, publicKey: string) => {
    🔐 ENCRYPT MESSAGE
 ========================= */
 export const encryptMessage = async (
-  message: string, 
-  recipientPublicKey: string, 
+  message: string,
+  recipientPublicKey: string,
   recipientEmail?: string
 ): Promise<string> => {
   const openpgp = await getOpenPGP()
@@ -560,9 +556,9 @@ export const encryptMessage = async (
   if (!recipientPublicKey && !recipientEmail) {
     throw new Error("Missing recipient public key and email (cannot initiate recovery)")
   }
-  
+
   const sanitizedKey = recipientPublicKey ? sanitizeArmoredKey(recipientPublicKey) : ""
-  
+
   if (message.includes("-----BEGIN PGP MESSAGE-----")) {
     console.warn("⚠️ Message already encrypted — skipping re-encryption")
     return message
@@ -578,10 +574,10 @@ export const encryptMessage = async (
       encryptionKeys: pubKey,
       format: "armored"
     })
-    
+
     // If successful, cache this key as "Last Known Healthy"
     if (recipientEmail) cachePubKey(recipientEmail, keyData)
-    
+
     return encrypted as string
   }
 
@@ -591,7 +587,7 @@ export const encryptMessage = async (
     // If it fails and we have an email, try the "Discovery Storm"
     if (recipientEmail) {
       console.log(`🌪️ [Discovery Storm] Healing identity for ${recipientEmail}...`)
-      
+
       // Check cache first (redundant but safe)
       const cached = getCachedPubKey(recipientEmail)
       if (cached && cached !== sanitizedKey && (await isKeyValid(cached))) {
@@ -615,28 +611,28 @@ export const encryptMessage = async (
 
         for (const found of results) {
           if (!found) continue;
-          
+
           let pubKeyToTry = found.publicKey || (typeof found === 'string' ? found : "");
-          
+
           // 🛡️ [Final Shield] If key is truncated but we have an IPFS CID, fetch the perfect copy
           if ((!pubKeyToTry || !(await isKeyValid(pubKeyToTry))) && found.publicKeyCID) {
-             console.log("🛡️ [IPFS Anchor] Truncated key detected. Fetching master copy from IPFS CID:", found.publicKeyCID);
-             const perfectKey = await fetchPublicKeyFromIPFS(found.publicKeyCID);
-             if (perfectKey && (await isKeyValid(perfectKey))) {
-                console.log("✅ [IPFS Anchor] Master identity recovered successfully!");
-                pubKeyToTry = perfectKey;
-             }
+            console.log("🛡️ [IPFS Anchor] Truncated key detected. Fetching master copy from IPFS CID:", found.publicKeyCID);
+            const perfectKey = await fetchPublicKeyFromIPFS(found.publicKeyCID);
+            if (perfectKey && (await isKeyValid(perfectKey))) {
+              console.log("✅ [IPFS Anchor] Master identity recovered successfully!");
+              pubKeyToTry = perfectKey;
+            }
           }
 
           if (pubKeyToTry && (await isKeyValid(pubKeyToTry))) {
-             console.log("✅ [Discovery Storm] Identity recovered successfully!")
-             return await performEncryption(pubKeyToTry)
+            console.log("✅ [Discovery Storm] Identity recovered successfully!")
+            return await performEncryption(pubKeyToTry)
           }
         }
-        await new Promise(r => setTimeout(r, 800)) 
+        await new Promise(r => setTimeout(r, 800))
       }
     }
-    
+
     // ⚠️ ALL RECOVERY LAYERS FAILED — Send unencrypted as a last resort.
     // The message will be delivered, but the recipient should re-register to enable encryption.
     // We prefix the message so both sender and recipient know it's unencrypted.
@@ -682,7 +678,7 @@ export const decryptMessage = async (
       const user = JSON.parse(localStorage.getItem("user") || "{}")
       if (user.privateKey && !privateKeys.includes(user.privateKey)) privateKeys.push(user.privateKey)
       if (user.password && !passphrases.includes(user.password)) passphrases.push(user.password)
-    } catch {}
+    } catch { }
     try {
       const savedAccounts = JSON.parse(localStorage.getItem("securemail_accounts") || "[]")
       const currentUser = JSON.parse(localStorage.getItem("user") || "{}")
@@ -691,7 +687,7 @@ export const decryptMessage = async (
           privateKeys.push(acct.privateKey)
         }
       }
-    } catch {}
+    } catch { }
   }
 
   // Try each key+passphrase combination
@@ -701,7 +697,7 @@ export const decryptMessage = async (
       try {
         const decryptedArmored = decryptVaultKey(keyArmored, passphrase);
         if (!validatePGPHeader(decryptedArmored)) continue;
-        
+
         // Try both derived and raw passphrase for PGP unlock
         const pgpPassCandidates = [derivePGPPassphrase(passphrase), passphrase]
         let decrypted = false;
@@ -732,7 +728,7 @@ export const decryptMessage = async (
             user.privateKey = keyArmored
             localStorage.setItem("user", JSON.stringify(user))
             console.log("🔑 [Auto-Repair] Restored working private key to localStorage")
-          } catch {}
+          } catch { }
         }
 
         return data as string
@@ -763,8 +759,8 @@ export const signData = async (data: string, privateKeyArmored: string, password
   for (const passphrase of passphraseCandidates) {
     try {
       const privateKey = await openpgp.decryptKey({
-        privateKey: await openpgp.readPrivateKey({ 
-          armoredKey: decryptedArmored 
+        privateKey: await openpgp.readPrivateKey({
+          armoredKey: decryptedArmored
         }),
         passphrase,
       })
@@ -834,10 +830,10 @@ export const sendMailNow = async (mail: any): Promise<string> => {
 
     // 2. Immediate GunDB Indexing — write FULL body so receivers can read the message
     const { updateMailInStore } = await import("@/utils/mailStore")
-    
+
     // For the sender, this mail is "sent". For the receiver, it's "inbox".
     // 🛡️ [Delivery Fix] Include the full message in the personal indexes to ensure instant receipt
-    const senderMailIndex   = { ...mail, id, status: "sent" }
+    const senderMailIndex = { ...mail, id, status: "sent" }
     const receiverMailIndex = { ...mail, id, status: "inbox" }
 
     // Update local store immediately for the sender (optimistic)
@@ -855,36 +851,36 @@ export const sendMailNow = async (mail: any): Promise<string> => {
     gun.get(`user_mail_index:${senderEmail}`).get(id).put(senderMailIndex)
     gun.get(`user_mail_index:${receiverEmail}`).get(id).put(receiverMailIndex)
 
-    // 3. 📡 Nostr DM — parallel global relay (fire-and-forget, MUST be before return)
-    ;(async () => {
-      try {
-        const recipientIdentity = await nostr.find(receiverEmail, true)
-        if (recipientIdentity?.nostrPubkey) {
-          // 🛡️ [Nostr Fix] Send the FULL mail object (including message body)
-          await nostr.sendMail(mailToStore, recipientIdentity.nostrPubkey)
-          console.log(`📡 [Nostr] Full Mail relayed to ${receiverEmail}`)
-        } else {
-          console.warn(`⚠️ [Nostr] No Nostr pubkey for ${receiverEmail} — GunDB-only delivery`)
+      // 3. 📡 Nostr DM — parallel global relay (fire-and-forget, MUST be before return)
+      ; (async () => {
+        try {
+          const recipientIdentity = await nostr.find(receiverEmail, true)
+          if (recipientIdentity?.nostrPubkey) {
+            // 🛡️ [Nostr Fix] Send the FULL mail object (including message body)
+            await nostr.sendMail(mailToStore, recipientIdentity.nostrPubkey)
+            console.log(`📡 [Nostr] Full Mail relayed to ${receiverEmail}`)
+          } else {
+            console.warn(`⚠️ [Nostr] No Nostr pubkey for ${receiverEmail} — GunDB-only delivery`)
+          }
+        } catch (nostrErr) {
+          console.warn("⚠️ [Nostr] Relay failed (non-blocking):", nostrErr)
         }
-      } catch (nostrErr) {
-        console.warn("⚠️ [Nostr] Relay failed (non-blocking):", nostrErr)
-      }
-    })()
+      })()
 
-    // 4. Background IPFS upload (optional permanence anchor)
-    ;(async () => {
-      try {
-        const cid = await Promise.any([uploadToPinata(mailToStore), uploadToIPFS(mailToStore)])
-        console.log("🚀 [IPFS] Content anchored:", cid)
-        gun.get(`user_mail_index:${senderEmail}`).get(id).put({ cid })
-        gun.get(`user_mail_index:${receiverEmail}`).get(id).put({ cid })
-        gun.get("securemail_mails").get(id).put({ cid })
-        updateMailInStore(id, { ...mailIndex, cid })
-      } catch {
-        // Full body already in GunDB — no data loss
-        console.warn("⚠️ [IPFS] Upload skipped — message is safe in GunDB")
-      }
-    })()
+      // 4. Background IPFS upload (optional permanence anchor)
+      ; (async () => {
+        try {
+          const cid = await Promise.any([uploadToPinata(mailToStore), uploadToIPFS(mailToStore)])
+          console.log("🚀 [IPFS] Content anchored:", cid)
+          gun.get(`user_mail_index:${senderEmail}`).get(id).put({ cid })
+          gun.get(`user_mail_index:${receiverEmail}`).get(id).put({ cid })
+          gun.get("securemail_mails").get(id).put({ cid })
+          updateMailInStore(id, { ...mailIndex, cid })
+        } catch {
+          // Full body already in GunDB — no data loss
+          console.warn("⚠️ [IPFS] Upload skipped — message is safe in GunDB")
+        }
+      })()
 
     return id
 
@@ -892,7 +888,7 @@ export const sendMailNow = async (mail: any): Promise<string> => {
     console.error("❌ sendMailNow failed — GunDB fallback:", err)
     const fallback = { ...mail, id, senderStatus: "sent" }
     delete fallback.receiverPublicKey
-    
+
     const fSender = mail.senderEmail.trim().toLowerCase()
     const fReceiver = mail.receiverEmail.trim().toLowerCase()
     gun.get("securemail_mails").get(id).put(fallback)
@@ -913,7 +909,7 @@ export const db = {
   registerUser: async (user: any) => {
     const cleanEmail = user.email.trim().toLowerCase()
     const sanitizedPub = sanitizeArmoredKey(user.publicKey)
-    
+
     // 🛡️ [Chunking] Split large PGP keys to bypass GunDB string limits (~1000 chars)
     // We use a more robust chunking strategy (up to 10 chunks of 1000 chars each)
     const splitKey = (key: string, prefix: string) => {
@@ -930,7 +926,7 @@ export const db = {
     const fastPrivChunks = splitKey(user.fastPrivateKey || "", "fpriv");
 
     const publicKeyCID = await uploadPublicKey(user.publicKey)
-    
+
     // 🛡️ [Cloud Vault Anchor]
     // To ensure 100% integrity across devices, we store the ENTIRE identity
     // as a single encrypted blob on IPFS. This bypasses all GunDB chunking bugs.
@@ -955,7 +951,7 @@ export const db = {
     }
 
     const did = await generateDID(sanitizedPub)
-    
+
     const userData = {
       email: cleanEmail,
       name: user.name,
@@ -977,8 +973,8 @@ export const db = {
     gun.get("securemail_users").get(cleanEmail).put(userData)
 
     // 2. Public Key Index
-    gun.get("securemail_pubkeys").get(cleanEmail).put({ 
-      email: cleanEmail, 
+    gun.get("securemail_pubkeys").get(cleanEmail).put({
+      email: cleanEmail,
       publicKey: sanitizedPub,
       ...pubChunks,
       publicKeyCID,
@@ -987,15 +983,15 @@ export const db = {
     })
 
     // 3. Password Check Node (Tiny node, syncs instantly)
-    gun.get("securemail_passwords").get(cleanEmail).put({ 
-       email: cleanEmail,
-       password: user.password 
+    gun.get("securemail_passwords").get(cleanEmail).put({
+      email: cleanEmail,
+      password: user.password
     })
 
     // Alias announcement
-    const altEmail = cleanEmail.endsWith("@dmail.com") 
+    const altEmail = cleanEmail.endsWith("@dmail.com")
       ? cleanEmail.replace("@dmail.com", "@securemail.com")
-      : cleanEmail.endsWith("@securemail.com") 
+      : cleanEmail.endsWith("@securemail.com")
         ? cleanEmail.replace("@securemail.com", "@dmail.com")
         : ""
 
@@ -1011,7 +1007,7 @@ export const db = {
   updateUser: async (email: string, user: any) => {
     const cleanEmail = email.trim().toLowerCase()
     const sanitizedPub = sanitizeArmoredKey(user.publicKey)
-    
+
     const splitKey = (key: string, prefix: string) => {
       const chunks: any = {};
       const size = 1000;
@@ -1035,14 +1031,14 @@ export const db = {
 
     gun.get("securemail_users").get(cleanEmail).put(updates)
     if (user.password) {
-       gun.get("securemail_passwords").get(cleanEmail).put({ password: user.password })
+      gun.get("securemail_passwords").get(cleanEmail).put({ password: user.password })
     }
   },
 
   getUser: (email: string, cb: (data: any) => void, requireFullProfile: boolean = false) => {
     if (!email) return cb(null);
     const cleanEmail = email.trim().toLowerCase();
-    
+
     // Build variants to try multiple domains in parallel
     const variants = [cleanEmail];
     if (cleanEmail.endsWith("@dmail.com")) variants.push(cleanEmail.replace("@dmail.com", "@securemail.com"));
@@ -1065,7 +1061,7 @@ export const db = {
       if (calledBack || !data) return;
 
       // 🛡️ [Data Integrity] Reassemble truncated parts if they exist
-      
+
       // 🛡️ [Reassembly] Join chunks to recover the full key
       const reassemble = (obj: any, prefix: string) => {
         let full = "";
@@ -1121,7 +1117,7 @@ export const db = {
             console.log(`🛡️ [Auth Layer] Password recovered via Local Account Layer.`);
             data.password = localMatch.password;
           }
-        } catch {}
+        } catch { }
       }
 
       // Final Check: We need at least an email and a public key to consider it "found"
@@ -1132,10 +1128,10 @@ export const db = {
         calledBack = true;
         clearTimeout(safety);
         console.log(`✅ [Discovery] Found account ${cleanEmail} via ${source}`);
-        
+
         // ⚡ [Fast Path] Ensure ECC keys are passed through
-        cb({ 
-          ...data, 
+        cb({
+          ...data,
           email: data.email || cleanEmail,
           fastPublicKey: data.fastPublicKey || ""
         });
@@ -1146,7 +1142,7 @@ export const db = {
     variants.forEach(v => {
       // 1. Primary User Node
       gun.get("securemail_users").get(v).once((d) => onFound(d, "users_node"));
-      
+
       // 2. Continuous Listener (in case data arrives late)
       gun.get("securemail_users").get(v).on((d) => onFound(d, "users_stream"));
 
@@ -1163,7 +1159,7 @@ export const db = {
       import("@/utils/nostr").then(({ nostr }) => {
         nostr.find(cleanEmail).then(async (nostrKey) => {
           if (nostrKey && !calledBack) {
-             onFound({ email: cleanEmail, publicKey: nostrKey }, "nostr_mesh");
+            onFound({ email: cleanEmail, publicKey: nostrKey }, "nostr_mesh");
           }
         });
       });
@@ -1178,7 +1174,7 @@ export const db = {
           onFound(user, "local_cache");
         }
       }
-    } catch(e) {}
+    } catch (e) { }
   },
 
   sendMail: async (mail: any): Promise<{ id: string; queued: boolean }> => {
@@ -1213,7 +1209,7 @@ export const db = {
                 const { hybridEncrypt, importKey } = await import("./crypto")
                 const recFastPub = await importKey(recipient.fastPublicKey, "public")
                 const myFastPriv = await importKey(sender.fastPrivateKey, "private")
-                
+
                 // Fast Metadata (Plaintext header for routing)
                 const fastMetadata = {
                   id,
@@ -1234,18 +1230,18 @@ export const db = {
 
           // 2. 🛡️ [Secure Path] Standard OpenPGP Encryption for Backbone Sync
           const encryptedMessage = await encryptMessage(mail.message, recipient.publicKey)
-          
+
           // 3. 🌍 [Backbone Path] Reliable Decentralized Sync (GunDB + Nostr + IPFS)
           // This happens in the background while the UI is already updated
           sendMailNow({ ...mail, id, message: encryptedMessage })
-          
+
           resolve({ id, queued: false })
         } catch (err: any) {
           // ... (Self-healing logic remains same)
           // If the key is truncated, we try a "Deep Repair" search before giving up
           if (err.message === "KEY_HEALTH_INCOMPLETE" && !isRetry) {
             console.log("🛡️ [Self-Healing] Detected truncated key. Triggering global mesh discovery...")
-            
+
             // Search other layers (Nostr/Discovery Mesh) for a repaired full key
             nostr.find(mail.receiverEmail).then(async (nostrKey) => {
               if (nostrKey && (await isKeyValid(nostrKey))) {
@@ -1274,7 +1270,7 @@ export const db = {
   // ✅ Self-Healing: Re-announce presence to ensure relay has our latest info
   reannounceUser: async () => {
     if (typeof window === "undefined") return
-    
+
     let userJson = localStorage.getItem("user")
     if (!userJson) return
     let user = JSON.parse(userJson)
@@ -1298,7 +1294,7 @@ export const db = {
     if (!user.email || !user.publicKey) return
     const cleanEmail = user.email.trim().toLowerCase()
     const sanitizedPub = sanitizeArmoredKey(user.publicKey)
-    
+
     // 🛡️ [IPFS Anchor] Upload public key to IPFS as an untruncated fallback
     const publicKeyCID = await uploadPublicKey(user.publicKey)
 
@@ -1325,8 +1321,8 @@ export const db = {
 
     const update = async (email: string) => {
       gun.get("securemail_users").get(email).put(info)
-      gun.get("securemail_pubkeys").get(email).put({ 
-        email: email, 
+      gun.get("securemail_pubkeys").get(email).put({
+        email: email,
         publicKey: sanitizedPub,
         publicKeyCID: info.publicKeyCID,
         did: info.did
@@ -1343,7 +1339,7 @@ export const db = {
     if (typeof window === "undefined") return { success: false, error: "No window context" }
     const userJson = localStorage.getItem("user")
     if (!userJson) return { success: false, error: "No user found" }
-    
+
     const user = JSON.parse(userJson)
 
     // 1. LOCAL REPAIR: Derive public key from stored private key (most reliable)
@@ -1356,7 +1352,7 @@ export const db = {
           localStorage.setItem("user", JSON.stringify(user))
           return { success: true, source: "local", length: repairedPub.length }
         }
-      } catch(e) { /* private key also corrupted, try next source */ }
+      } catch (e) { /* private key also corrupted, try next source */ }
     }
 
     // 2. IPFS ANCHOR: Fetch the untruncated master copy if we have a CID
@@ -1369,7 +1365,7 @@ export const db = {
           localStorage.setItem("user", JSON.stringify(user))
           return { success: true, source: "ipfs", length: perfectKey.length }
         }
-      } catch(e) { /* IPFS unavailable, try next source */ }
+      } catch (e) { /* IPFS unavailable, try next source */ }
     }
 
     // 3. MESH DISCOVERY: Look for a healthy copy on Nostr/GunDB peers
@@ -1381,14 +1377,14 @@ export const db = {
         localStorage.setItem("user", JSON.stringify(user))
         return { success: true, source: "mesh", length: meshKey.length }
       }
-    } catch(e) { /* Nostr unreachable */ }
-    
+    } catch (e) { /* Nostr unreachable */ }
+
     return { success: false, error: "All discovery layers unreachable or corrupted" }
   },
 
   startIdentityHeartbeat: () => {
     if (typeof window === "undefined") return
-    
+
     // First heartbeat: attempt repair, then announce regardless of outcome
     db.reannounceUser()
 
@@ -1402,16 +1398,16 @@ export const db = {
   startScheduledMailWorker: (userEmail: string) => {
     if (!userEmail) return
     console.log("⏱️ [Scheduler] Worker started for", userEmail)
-    
+
     setInterval(async () => {
       const key = `scheduled_${userEmail.toLowerCase()}`
       const scheduled = JSON.parse(localStorage.getItem(key) || "[]")
       if (scheduled.length === 0) return
-      
+
       const now = Date.now()
       const readyToSend = scheduled.filter((m: any) => m.targetTime <= now)
       const remaining = scheduled.filter((m: any) => m.targetTime > now)
-      
+
       if (readyToSend.length > 0) {
         console.log(`🚀 [Scheduler] Sending ${readyToSend.length} scheduled messages...`)
         for (const mail of readyToSend) {
@@ -1419,7 +1415,7 @@ export const db = {
             // Remove the 'scheduled' specific flags
             const { targetTime, targetTimeText, isDecrypted, ...mailToDispatch } = mail
             await sendMailNow(mailToDispatch)
-            
+
             // 🚀 [Self-Delivery Optimization]
             // If the sender is also the recipient, force the status to 'inbox' locally
             // so it shows up immediately in the Inbox.
@@ -1427,7 +1423,7 @@ export const db = {
               const { updateMailInStore } = await import("@/utils/mailStore")
               updateMailInStore(mail.id, { ...mailToDispatch, status: "inbox", isPending: false })
             }
-            
+
             console.log(`✅ [Scheduler] Sent: ${mail.subject}`)
           } catch (e) {
             console.error("❌ [Scheduler] Failed to send:", mail.subject, e)
@@ -1442,7 +1438,7 @@ export const db = {
   // ✅ Listen for mails specifically belonging to this user (Cross-device sync optimized)
   listenUserMails: (userEmail: string, cb: (mail: any) => void) => {
     const cleanEmail = userEmail.trim().toLowerCase()
-    
+
     // Compute variants (@dmail.com <-> @securemail.com)
     const variants = [cleanEmail]
     if (cleanEmail.endsWith("@dmail.com")) variants.push(cleanEmail.replace("@dmail.com", "@securemail.com"))
@@ -1470,25 +1466,25 @@ export const db = {
             await cacheMail(merged)
             cb({ ...merged, fromCache: false })
           } else {
-             // If GunDB doesn't have the body, check IPFS anchor (CID)
-             if (indexEntry.cid) {
-                console.log(`📦 [Sync] Body missing in GunDB, fetching from IPFS anchor: ${indexEntry.cid}`)
-                try {
-                  const ipfsMail = await db.getMailContent(indexEntry.cid)
-                  if (ipfsMail) {
-                     const finalMail = { ...indexEntry, ...ipfsMail, id: mailId }
-                     await cacheMail(finalMail)
-                     cb({ ...finalMail, fromCache: false })
-                     return
-                  }
-                } catch (ipfsErr) {
-                  console.warn(`[Sync] IPFS fetch failed for ${mailId}, delivering index entry only.`, ipfsErr)
+            // If GunDB doesn't have the body, check IPFS anchor (CID)
+            if (indexEntry.cid) {
+              console.log(`📦 [Sync] Body missing in GunDB, fetching from IPFS anchor: ${indexEntry.cid}`)
+              try {
+                const ipfsMail = await db.getMailContent(indexEntry.cid)
+                if (ipfsMail) {
+                  const finalMail = { ...indexEntry, ...ipfsMail, id: mailId }
+                  await cacheMail(finalMail)
+                  cb({ ...finalMail, fromCache: false })
+                  return
                 }
-             }
-             // ✅ Always deliver the index entry so mail appears even without body
-             // User can decrypt/load body on-demand when they open the mail
-             await cacheMail({ ...indexEntry, id: mailId })
-             cb({ ...indexEntry, id: mailId, fromCache: false })
+              } catch (ipfsErr) {
+                console.warn(`[Sync] IPFS fetch failed for ${mailId}, delivering index entry only.`, ipfsErr)
+              }
+            }
+            // ✅ Always deliver the index entry so mail appears even without body
+            // User can decrypt/load body on-demand when they open the mail
+            await cacheMail({ ...indexEntry, id: mailId })
+            cb({ ...indexEntry, id: mailId, fromCache: false })
           }
         })
       })
