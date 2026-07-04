@@ -72,7 +72,7 @@ function Sidebar({ isOpen, onCompose }: SidebarProps) {
 
   const handleLogout = () => {
     localStorage.removeItem("user")
-    router.push("/login")
+    window.location.href = "/login"
   }
 
   const isActive = (segment: string) => pathname.includes(segment)

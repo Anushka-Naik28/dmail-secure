@@ -69,7 +69,7 @@ export default function AccountSwitcher({ onClose }: AccountSwitcherProps) {
         clearStore()
         logout()
         onClose()
-        router.push("/login")
+        window.location.href = "/login"
       }
     })
     setPasswordAttempt("")

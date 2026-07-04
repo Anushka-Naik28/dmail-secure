@@ -293,7 +293,7 @@ export default function Signup() {
             <div style={{ display: "flex", justifyContent: "center", marginTop: "20px" }}>
               <button
                 className="btn"
-                onClick={() => { setShowSuccessModal(false); router.push("/dashboard/inbox") }}
+                onClick={() => { setShowSuccessModal(false); window.location.href = "/dashboard/inbox" }}
               >Go to Inbox <ArrowRight size={16} style={{ marginLeft: "8px" }} /></button>
             </div>
           </div>

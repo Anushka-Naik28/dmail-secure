@@ -95,7 +95,7 @@ function LoginForm() {
         
         setLoginMessage({ text: "Passkey Verified! Accessing Inbox...", type: "success" })
         setLoading(false)
-        setTimeout(() => router.push("/dashboard/inbox"), 1000)
+        setTimeout(() => { window.location.href = "/dashboard/inbox" }, 1000)
       }
     } catch (err: any) {
       console.error("Passkey Login Error:", err)
@@ -279,7 +279,7 @@ function LoginForm() {
 
       setLoginMessage({ text: "Identity Verified. Accessing Inbox...", type: "success" })
       setLoading(false)
-      setTimeout(() => router.push("/dashboard/inbox"), 1000)
+      setTimeout(() => { window.location.href = "/dashboard/inbox" }, 1000)
     } catch (err: any) {
       console.error("Login Error:", err)
       setLoginMessage({ text: "Authentication failed. Please check your network connection.", type: "error" })
@@ -317,7 +317,7 @@ function LoginForm() {
       
       setLoginMessage({ text: "Identity Restored! Connecting to mesh...", type: "success" })
       setLoading(false)
-      setTimeout(() => router.push("/dashboard/inbox"), 1000)
+      setTimeout(() => { window.location.href = "/dashboard/inbox" }, 1000)
     } catch (err) {
       setLoginMessage({ text: "Restoration failed. Verify credentials.", type: "error" })
       setLoading(false)
