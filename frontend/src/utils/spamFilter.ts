@@ -27,13 +27,16 @@ const hasPreviousConversation = (
 ): Promise<boolean> => {
   return new Promise((resolve) => {
     let found = false
-    const timeout = setTimeout(() => resolve(found), 1500)
+    const timeout = setTimeout(() => resolve(found), 500)
 
-    gun.get("securemail_mails").map().once((mail: any) => {
+    const cleanSender = senderEmail?.trim().toLowerCase()
+    const cleanUser = userEmail?.trim().toLowerCase()
+
+    gun.get(`user_mail_index:${cleanUser}`).map().once((mail: any) => {
       if (
         mail &&
-        mail.senderEmail === userEmail &&
-        mail.receiverEmail?.toLowerCase() === senderEmail?.toLowerCase()
+        mail.senderEmail?.trim().toLowerCase() === cleanUser &&
+        mail.receiverEmail?.trim().toLowerCase() === cleanSender
       ) {
         found = true
         clearTimeout(timeout)
