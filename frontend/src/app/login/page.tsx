@@ -40,8 +40,19 @@ function LoginForm() {
   useEffect(() => {
     const accounts = getSavedAccounts()
     setSavedAccounts(accounts)
-    const user = JSON.parse(localStorage.getItem("user") || "{}")
-    setCurrentEmail(user.email || "")
+    let user: any = {}
+    try {
+      const rawUser = localStorage.getItem("user")
+      if (rawUser) {
+        user = JSON.parse(rawUser)
+      }
+    } catch (e) {
+      console.warn("Corrupted user localStorage found, resetting...")
+      if (typeof window !== "undefined") {
+        localStorage.removeItem("user")
+      }
+    }
+    setCurrentEmail(user?.email || "")
   }, [])
 
   const checkStrength = (pwd: string) => {

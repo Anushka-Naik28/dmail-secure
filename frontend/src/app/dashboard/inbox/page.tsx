@@ -110,7 +110,18 @@ function InboxPageContent() {
 
   useEffect(() => {
     if (typeof window === "undefined") return
-    const user = JSON.parse(localStorage.getItem("user") || "{}")
+    let user: any = {}
+    try {
+      const rawUser = localStorage.getItem("user")
+      if (rawUser) {
+        user = JSON.parse(rawUser)
+      }
+    } catch (e) {
+      console.warn("Corrupted user localStorage in inbox, resetting...")
+      if (typeof window !== "undefined") {
+        localStorage.removeItem("user")
+      }
+    }
     if (user.email) setUserEmail(user.email)
 
     // 🛡️ [Auto-Unlock] If we have a password in session, try to auto-unlock

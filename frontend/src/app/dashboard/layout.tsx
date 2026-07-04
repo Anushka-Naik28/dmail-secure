@@ -26,8 +26,19 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     if (isInitialized.current) return
     isInitialized.current = true
 
-    const user = JSON.parse(localStorage.getItem("user") || "{}")
-    if (!user.email) return
+    let user: any = {}
+    try {
+      const rawUser = localStorage.getItem("user")
+      if (rawUser) {
+        user = JSON.parse(rawUser)
+      }
+    } catch (e) {
+      console.warn("Corrupted user localStorage in layout, resetting...")
+      if (typeof window !== "undefined") {
+        localStorage.removeItem("user")
+      }
+    }
+    if (!user?.email) return
     
     initMailStore(user.email)
     initLabelSync(user.email)
