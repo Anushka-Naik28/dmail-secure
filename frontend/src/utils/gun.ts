@@ -1458,6 +1458,13 @@ export const db = {
         const mailId = indexEntry.id || key
         if (!mailId) return
 
+        // 🚀 [Fast Path] If the index entry already contains the message body, deliver it immediately!
+        if (indexEntry.message) {
+          await cacheMail({ ...indexEntry, id: mailId })
+          cb({ ...indexEntry, id: mailId, fromCache: false })
+          return
+        }
+
         // 🛡️ [Cross-Device Discovery Fix]
         // If the index entry exists but body is missing, explicitly fetch from backbone
         gun.get("securemail_mails").get(mailId).once(async (fullMail: any) => {

@@ -89,8 +89,9 @@ export const initMailStore = async (userEmail: string, force = false) => {
 
     if (isNewIncoming) {
       processedIds.add(mail.id)
+      let decision: any = { status: "inbox", flaggedReason: "", spamScore: 0 }
       try {
-        const decision = await filterIncomingMail(mail, userEmail)
+        decision = await filterIncomingMail(mail, userEmail)
         
         updateMailInStore(mail.id, { 
           ...mail, 
@@ -99,11 +100,11 @@ export const initMailStore = async (userEmail: string, force = false) => {
           spamScore: decision.spamScore, 
           fromCache: false 
         })
-        
-        if (decision.status !== "inbox") return
       } catch (err) {
         console.warn("Spam filter failed", err)
       }
+      
+      if (decision?.status !== "inbox") return
     }
 
     // 🛡️ [Message Protection] Don't overwrite a decrypted message with its encrypted form
