@@ -77,6 +77,15 @@ const cryptoBridgeScript = `
         Object.defineProperty(window, 'isSecureContext', { value: true, writable: true, configurable: true });
       } catch(e) {}
     }
+
+    // 5. Sanitize localStorage to prevent crashes from legacy projects on localhost
+    try {
+      var rawUser = localStorage.getItem("user");
+      if (rawUser && !rawUser.startsWith("{") && !rawUser.startsWith("[")) {
+        console.warn("[DMail] Clearing legacy non-JSON user key from localStorage.");
+        localStorage.removeItem("user");
+      }
+    } catch(e) {}
   } catch(e) {
     console.error('[DMail] Crypto Bridge application failed:', e);
   }
