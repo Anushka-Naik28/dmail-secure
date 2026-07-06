@@ -1,4 +1,4 @@
-﻿node_modules/
+node_modules/
 .next/
 .env
 .env.local
@@ -6,3 +6,8 @@
 *.data
 dist/
 build/
+backend/data/
+backend/radata/
+backend/data_pop3/
+backend/*.tmp
+backend/.env

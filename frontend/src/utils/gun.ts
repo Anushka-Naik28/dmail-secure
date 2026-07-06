@@ -96,7 +96,7 @@ const getPeers = (): string[] => {
       peers.add(`http://127.0.0.1:8765/gun`);
     } else {
       // Production Relay deployment:
-      peers.add(`https://dmail-relay.onrender.com/gun`);
+      peers.add(`https://dmail-secure.onrender.com/gun`);
     }
 
     // 3. [Discovery] Previously successful relays
