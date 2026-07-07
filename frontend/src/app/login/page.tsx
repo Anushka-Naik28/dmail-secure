@@ -20,6 +20,14 @@ function LoginForm() {
   const router = useRouter()
 
   const [email, setEmail] = useState("")
+  const searchParams = useSearchParams()
+
+  useEffect(() => {
+    const emailParam = searchParams?.get("email")
+    if (emailParam) {
+      setEmail(emailParam)
+    }
+  }, [searchParams])
   const [password, setPassword] = useState("")
   const [loading, setLoading] = useState(false)
   const [showPassword, setShowPassword] = useState(false)
@@ -359,7 +367,7 @@ function LoginForm() {
     <div className="page-center">
       <div className="auth-card">
 
-        {/* Updated Header with ETHREX DMail Logo */}
+        {/* Updated Header with EtherX DMail Logo */}
         <div className="auth-header">
           <Logo size={48} layout="horizontal" showText={true} />
           <div className="auth-header-content">

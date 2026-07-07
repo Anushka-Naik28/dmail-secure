@@ -1194,7 +1194,8 @@ export const db = {
 
     return new Promise((resolve, reject) => {
       const attemptSend = async (recipient: any, isRetry = false) => {
-        if (!recipient?.publicKey) {
+        const isDmail = mail.receiverEmail.endsWith("@dmail.com") || mail.receiverEmail.endsWith("@securemail.com")
+        if (isDmail && !recipient?.publicKey) {
           return reject(new Error(`Recipient ${mail.receiverEmail} not found.`))
         }
 
@@ -1203,7 +1204,7 @@ export const db = {
 
         try {
           // 1. ⚡ [Fast Path] Attempt Instant Push via Relay
-          if (recipient.fastPublicKey && sender.fastPrivateKey) {
+          if (recipient && recipient.fastPublicKey && sender.fastPrivateKey) {
             import("./relay").then(async ({ pushMail, isRelayConnected }) => {
               if (isRelayConnected()) {
                 const { hybridEncrypt, importKey } = await import("./crypto")
@@ -1229,7 +1230,9 @@ export const db = {
           }
 
           // 2. 🛡️ [Secure Path] Standard OpenPGP Encryption for Backbone Sync
-          const encryptedMessage = await encryptMessage(mail.message, recipient.publicKey)
+          const encryptedMessage = recipient?.publicKey
+            ? await encryptMessage(mail.message, recipient.publicKey)
+            : mail.message
 
           // 3. 🌍 [Backbone Path] Reliable Decentralized Sync (GunDB + Nostr + IPFS)
           // This happens in the background while the UI is already updated
@@ -1237,7 +1240,6 @@ export const db = {
 
           resolve({ id, queued: false })
         } catch (err: any) {
-          // ... (Self-healing logic remains same)
           // If the key is truncated, we try a "Deep Repair" search before giving up
           if (err.message === "KEY_HEALTH_INCOMPLETE" && !isRetry) {
             console.log("🛡️ [Self-Healing] Detected truncated key. Triggering global mesh discovery...")
@@ -1259,7 +1261,12 @@ export const db = {
         }
       }
 
-      db.getUser(mail.receiverEmail, (recipient) => attemptSend(recipient))
+      const isDmail = mail.receiverEmail.endsWith("@dmail.com") || mail.receiverEmail.endsWith("@securemail.com")
+      if (!isDmail) {
+        attemptSend(null)
+      } else {
+        db.getUser(mail.receiverEmail, (recipient) => attemptSend(recipient))
+      }
     })
   },
 

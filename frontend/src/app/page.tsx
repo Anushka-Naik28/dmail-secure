@@ -18,7 +18,7 @@ export default function Home() {
   return (
     <div className="page-center" style={{ textAlign: "center" }}>
       <div className="auth-card" style={{ maxWidth: "450px" }}>
-        <div style={{ marginBottom: "32px" }}>
+        <div style={{ marginBottom: "32px", display: "flex", justifyContent: "center" }}>
           <Logo size={80} layout="vertical" />
         </div>
         
@@ -26,7 +26,8 @@ export default function Home() {
           fontSize: "28px", 
           marginBottom: "12px", 
           fontFamily: "Cinzel, serif",
-          color: "var(--gold-mid)"
+          color: "var(--gold-mid)",
+          textAlign: "center"
         }}>
           SecureMail
         </h1>
@@ -35,7 +36,8 @@ export default function Home() {
           color: "var(--text-muted)", 
           fontSize: "14px", 
           lineHeight: "1.6",
-          marginBottom: "32px"
+          marginBottom: "32px",
+          textAlign: "center"
         }}>
           The world's first fully decentralized, end-to-end encrypted email service. 
           Your identity, your data, your control.

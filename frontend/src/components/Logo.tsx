@@ -53,7 +53,7 @@ export default function Logo({
         >
             <Image
                 src={`/logo-combined-nobg.png${cacheBuster}`}
-                alt="ETHREX DMail Logo"
+                alt="EtherX DMail Logo"
                 width={calculatedWidth}
                 height={calculatedHeight}
                 priority

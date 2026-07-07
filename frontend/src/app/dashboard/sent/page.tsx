@@ -153,7 +153,11 @@ function SentPageContent() {
           <div style={{ flex: 1 }}>
             <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
               <span style={{ fontSize: "16px", fontWeight: "700", color: "var(--text-bright)" }}>To: {mail.receiverName || mail.receiverEmail}</span>
-              <span style={{ fontSize: "14px", color: "var(--text-dim)" }}>{mail.time}</span>
+              <span style={{ fontSize: "14px", color: "var(--text-dim)" }}>
+                {mail.time && !isNaN(Date.parse(mail.time)) 
+                  ? new Date(mail.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) 
+                  : mail.time}
+              </span>
             </div>
             <div style={{ display: "flex", flexWrap: "wrap", gap: "6px", marginTop: "4px" }}>
               {userLabels.filter(l => getMailLabels(userEmail, mail.id).includes(l.id)).map(lbl => (
@@ -169,7 +173,7 @@ function SentPageContent() {
               ))}
             </div>
             <div style={{ fontSize: "14px", color: "var(--text-dim)", marginTop: "4px" }}>
-              Sent from your DMail Account
+              {mail.senderEmail} <span style={{ margin: "0 4px" }}>→</span> {mail.receiverEmail}
             </div>
           </div>
         </div>
@@ -247,8 +251,8 @@ function SentPageContent() {
   return (
     <div style={{ display: "flex", height: "100%", background: "var(--bg-body)", overflow: "hidden" }}>
       <div style={{ 
-        width: selectedMail ? "360px" : "100%", display: "flex", flexDirection: "column", flexShrink: 0,
-        transition: "width 0.3s ease", maxWidth: selectedMail ? "360px" : "1200px", margin: selectedMail ? "0" : "0 auto",
+        width: currentSelectedMail ? "360px" : "100%", display: "flex", flexDirection: "column", flexShrink: 0,
+        transition: "width 0.3s cubic-bezier(0.4, 0, 0.2, 1)", maxWidth: currentSelectedMail ? "360px" : "1200px", margin: currentSelectedMail ? "0" : "0 auto",
         willChange: "width"
       }}>
         <div style={{ padding: "24px 24px 12px" }}>
@@ -261,8 +265,22 @@ function SentPageContent() {
               onClick={() => { 
                 setIsRefreshing(true); 
                 initMailStore(userEmail, true);
+                setTimeout(() => setIsRefreshing(false), 800);
               }} 
-              style={{ background: "none", border: "none", color: "var(--text-dim)", cursor: "pointer", marginLeft: "auto" }}
+              style={{ 
+                background: "none", border: "none", color: "var(--text-dim)", 
+                cursor: "pointer", display: "flex", alignItems: "center",
+                transition: "color 0.2s, transform 0.3s", marginLeft: "auto" 
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.color = "var(--gold-mid)"
+                e.currentTarget.style.transform = "rotate(180deg)"
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.color = "var(--text-dim)"
+                e.currentTarget.style.transform = "rotate(0deg)"
+              }}
+              title="Refresh Sent Mail"
             >
               <RefreshCw size={18} style={{ animation: isRefreshing ? "spin 1s linear infinite" : "none" }} />
             </button>

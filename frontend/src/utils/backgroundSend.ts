@@ -53,13 +53,17 @@ export const sendMailInBackground = async ({
       console.log(`🚀 [BackgroundSend] Starting dispatch for ${recipientEmail}`)
       
       // Step A: Recipient Lookup
-      let recipientData = await new Promise<any>(res => db.getUser(recipientEmail, res))
-      if (!recipientData?.publicKey) {
-        try {
-          const { nostr } = await import("@/utils/nostr")
-          const meshData = await nostr.find(recipientEmail, true)
-          if (meshData?.publicKey) recipientData = meshData
-        } catch {}
+      const isDmail = recipientEmail.endsWith("@dmail.com") || recipientEmail.endsWith("@securemail.com")
+      let recipientData = null
+      if (isDmail) {
+        recipientData = await new Promise<any>(res => db.getUser(recipientEmail, res))
+        if (!recipientData?.publicKey) {
+          try {
+            const { nostr } = await import("@/utils/nostr")
+            const meshData = await nostr.find(recipientEmail, true)
+            if (meshData?.publicKey) recipientData = meshData
+          } catch {}
+        }
       }
       if (!recipientData) recipientData = { email: recipientEmail, publicKey: null }
 
@@ -75,6 +79,9 @@ export const sendMailInBackground = async ({
           let msg = ""
           let attempts = 0
           let currentData = recipientData
+          if (!currentData.publicKey) {
+            return message
+          }
           while (attempts < 2) {
             try {
               msg = await encryptMessage(message, currentData.publicKey, currentData.email)

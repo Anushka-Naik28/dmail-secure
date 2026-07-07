@@ -62,6 +62,11 @@ export default function ComposeWindow({
       setEncryptionReady("checking")
       return
     }
+    const isDmail = normalizedRecipient.endsWith("@dmail.com") || normalizedRecipient.endsWith("@securemail.com")
+    if (!isDmail) {
+      setEncryptionReady("no-key")
+      return
+    }
     const timer = setTimeout(() => {
       db.getUser(normalizedRecipient, (data: any) => {
         setEncryptionReady(data?.publicKey ? "ready" : "no-key")
@@ -248,17 +253,46 @@ export default function ComposeWindow({
         <div style={{ display: "flex", alignItems: "center", gap: "20px", marginBottom: "12px" }}>
           <span style={{ fontSize: "11px", fontWeight: "800", color: "var(--text-dim)", width: "60px" }}>TO</span>
           <div style={{ flex: 1, display: "flex", flexWrap: "wrap", gap: "8px", alignItems: "center" }}>
-            {recipientEmail && recipientEmail.includes("@") && (
-              <div style={{ background: "rgba(212, 175, 55, 0.15)", color: "var(--gold-mid)", padding: "4px 12px", borderRadius: "4px", fontSize: "13px", fontWeight: "600" }}>
+            {recipientEmail && recipientEmail.includes("@") ? (
+              <div style={{ 
+                display: "flex", 
+                alignItems: "center", 
+                gap: "6px",
+                background: "rgba(212, 175, 55, 0.15)", 
+                color: "var(--gold-mid)", 
+                padding: "4px 12px", 
+                borderRadius: "4px", 
+                fontSize: "13px", 
+                fontWeight: "600" 
+              }}>
                 {recipientEmail}
+                <button
+                  type="button"
+                  onClick={() => setRecipientEmail("")}
+                  style={{
+                    background: "none",
+                    border: "none",
+                    color: "var(--gold-mid)",
+                    cursor: "pointer",
+                    display: "flex",
+                    alignItems: "center",
+                    padding: "2px",
+                    opacity: 0.8
+                  }}
+                  onMouseEnter={(e) => e.currentTarget.style.opacity = "1"}
+                  onMouseLeave={(e) => e.currentTarget.style.opacity = "0.8"}
+                >
+                  <X size={12} />
+                </button>
               </div>
+            ) : (
+              <input
+                style={{ background: "none", border: "none", outline: "none", color: "var(--text-bright)", fontSize: "13px", flex: 1 }}
+                placeholder="recipient@dmail.com"
+                value={recipientEmail}
+                onChange={(e) => setRecipientEmail(e.target.value)}
+              />
             )}
-            <input
-              style={{ background: "none", border: "none", outline: "none", color: "var(--text-bright)", fontSize: "13px", flex: 1 }}
-              placeholder={!recipientEmail ? "recipient@dmail.com" : ""}
-              value={recipientEmail}
-              onChange={(e) => setRecipientEmail(e.target.value)}
-            />
           </div>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: "20px", marginBottom: "12px" }}>

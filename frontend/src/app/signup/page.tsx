@@ -71,7 +71,7 @@ export default function Signup() {
 
       // REAL CHECK
       const meshData = await new Promise<any>(res => {
-        const timeout = setTimeout(() => res(null), 8000)
+        const timeout = setTimeout(() => res(null), 1500)
         db.getUser(generatedEmail, (data) => {
           clearTimeout(timeout)
           res(data)
@@ -99,7 +99,7 @@ export default function Signup() {
       }
 
       db.registerUser(userObj)
-      localStorage.setItem("user", JSON.stringify(userObj))
+
 
       // Announce on Nostr Mesh
       import("@/utils/nostr").then(({ nostr }) => {
@@ -140,7 +140,7 @@ export default function Signup() {
           <div className="auth-header-content">
             <h2 className="auth-title">Create Account</h2>
             <p className="auth-subtitle">
-              Generate your decentralized PGP keys and secure your communication via the ETHREX network.
+              Generate your decentralized PGP keys and secure your communication via the EtherX network.
             </p>
           </div>
         </div>
@@ -293,8 +293,8 @@ export default function Signup() {
             <div style={{ display: "flex", justifyContent: "center", marginTop: "20px" }}>
               <button
                 className="btn"
-                onClick={() => { setShowSuccessModal(false); window.location.href = "/dashboard/inbox" }}
-              >Go to Inbox <ArrowRight size={16} style={{ marginLeft: "8px" }} /></button>
+                onClick={() => { setShowSuccessModal(false); window.location.href = `/login?email=${encodeURIComponent(createdEmail)}` }}
+              >Proceed to Sign In <ArrowRight size={16} style={{ marginLeft: "8px" }} /></button>
             </div>
           </div>
         </div>

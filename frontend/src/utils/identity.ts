@@ -26,7 +26,40 @@ const ITERATIONS = 150000; // High iterations to protect against GPU brute-forci
 export async function deriveSeed(email: string, password: string): Promise<string> {
   const cleanEmail = email.trim().toLowerCase();
   
-  // PBKDF2 with Email as Salt
+  // Try native Web Crypto API first (nearly instantaneous)
+  if (typeof window !== "undefined" && window.crypto && window.crypto.subtle) {
+    try {
+      const passwordBuffer = new TextEncoder().encode(password);
+      const saltBuffer = new TextEncoder().encode(cleanEmail);
+
+      const baseKey = await window.crypto.subtle.importKey(
+        "raw",
+        passwordBuffer,
+        { name: "PBKDF2" },
+        false,
+        ["deriveBits"]
+      );
+
+      const derivedBits = await window.crypto.subtle.deriveBits(
+        {
+          name: "PBKDF2",
+          salt: saltBuffer,
+          iterations: ITERATIONS,
+          hash: "SHA-512"
+        },
+        baseKey,
+        512 // 512 bits = 64 bytes
+      );
+
+      // Convert ArrayBuffer to Hex string
+      const hashArray = Array.from(new Uint8Array(derivedBits));
+      return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
+    } catch (e) {
+      console.warn("⚠️ Native Web Crypto PBKDF2 failed, falling back to CryptoJS:", e);
+    }
+  }
+
+  // Fallback to CryptoJS
   const salt = CryptoJS.enc.Utf8.parse(cleanEmail);
   const derived = CryptoJS.PBKDF2(password, salt, {
     keySize: 512 / 32,
