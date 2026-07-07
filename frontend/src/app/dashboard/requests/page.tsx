@@ -1,49 +1,25 @@
 "use client"
 
 import { useEffect, useState, useMemo, Suspense } from "react"
-import { useRouter, useSearchParams } from "next/navigation"
-import { decryptMessage } from "@/utils/gun"
-import { Star, Trash2, ArrowLeft, RefreshCw, UserCheck, Search, Check, ShieldCheck } from "lucide-react"
-import { subscribe, updateMailInStore, getMails, initMailStore } from "@/utils/mailStore"
+import { subscribe, updateMailInStore, getMails } from "@/utils/mailStore"
 import { trustSender } from "@/utils/spamFilter"
-import MailRow from "@/components/MailRow"
+import { UserCheck, RefreshCw, AlertCircle } from "lucide-react"
 
 function RequestsPageContent() {
-  const router = useRouter()
-  const searchParams = useSearchParams()
-  const urlSearch = searchParams.get("search") || ""
-
   const [mails, setMails] = useState<any[]>([])
-  const [selectedMail, setSelectedMail] = useState<any>(null)
   const [userEmail, setUserEmail] = useState("")
-  const [vaultPassword, setVaultPassword] = useState("")
-  const [decrypting, setDecrypting] = useState(false)
-  const [decryptError, setDecryptError] = useState("")
-  const [decryptedContent, setDecryptedContent] = useState<string | null>(null)
-  const [searchQuery, setSearchQuery] = useState(urlSearch)
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [isRefreshing, setIsRefreshing] = useState(false)
-  const [debouncedSearch, setDebouncedSearch] = useState(searchQuery)
-
-  useEffect(() => {
-    const timer = setTimeout(() => setDebouncedSearch(searchQuery), 300)
-    return () => clearTimeout(timer)
-  }, [searchQuery])
-
-  useEffect(() => {
-    if (urlSearch) setSearchQuery(urlSearch)
-  }, [urlSearch])
+  const [contactsTrigger, setContactsTrigger] = useState(0)
 
   useEffect(() => {
     if (typeof window === "undefined") return
     const user = JSON.parse(localStorage.getItem("user") || "{}")
     if (user.email) {
       setUserEmail(user.email)
-      initMailStore(user.email)
     }
 
     const updateMails = () => {
-      setMails(getMails("request"))
+      setMails(getMails("all"))
       setIsRefreshing(false)
     }
     updateMails()
@@ -51,286 +27,213 @@ function RequestsPageContent() {
     return () => unsub()
   }, [])
 
-  const currentSelectedMail = useMemo(() => {
-    if (!selectedMail) return null
-    return mails.find(m => m.id === selectedMail.id) || selectedMail
-  }, [mails, selectedMail])
+  // Get unique untrusted senders from all emails
+  const untrustedSenders = useMemo(() => {
+    if (!userEmail) return []
 
-  const filteredMails = useMemo(() => {
-    return mails
-      .filter(m => {
-        if (debouncedSearch) {
-          const q = debouncedSearch.toLowerCase()
-          return (
-            m.subject?.toLowerCase().includes(q) ||
-            m.senderEmail?.toLowerCase().includes(q) ||
-            m.message?.toLowerCase().includes(q)
-          )
-        }
-        return true
-      })
-      .sort((a, b) => {
-        const getTime = (m: any) => m.time ? new Date(m.time).getTime() : 0
-        return getTime(b) - getTime(a)
-      })
-  }, [mails, debouncedSearch])
-
-  const toggleSelection = (id: string, e?: React.MouseEvent) => {
-    if (e) e.stopPropagation()
-    const newSelected = new Set(selectedIds)
-    if (newSelected.has(id)) newSelected.delete(id)
-    else newSelected.add(id)
-    setSelectedIds(newSelected)
-  }
-
-  const handleToggleSelectAll = () => {
-    if (selectedIds.size > 0 && selectedIds.size === filteredMails.length) {
-      setSelectedIds(new Set())
-    } else {
-      setSelectedIds(new Set(filteredMails.map(m => m.id)))
-    }
-  }
-
-  const isAllSelected = filteredMails.length > 0 && selectedIds.size === filteredMails.length
-
-  const handleBulkAccept = () => {
-    selectedIds.forEach(id => {
-      const mail = mails.find(m => m.id === id)
-      if (mail) {
-        trustSender(mail.senderEmail, userEmail)
-        updateMailInStore(id, { status: "inbox", flaggedReason: "", spamScore: 0 })
-      }
-    })
-    setSelectedIds(new Set())
-    setSelectedMail(null)
-  }
-
-  const handleBulkDelete = () => {
-    selectedIds.forEach(id => {
-      updateMailInStore(id, { status: "purged", purgedAt: Date.now() })
-    })
-    setSelectedIds(new Set())
-    setSelectedMail(null)
-  }
-
-  const openMail = (mail: any) => {
-    setSelectedMail(mail)
-    setDecryptedContent(null)
-    setDecryptError("")
-    setVaultPassword("")
-    if (!mail.isRead && mail.receiverEmail === userEmail) {
-      updateMailInStore(mail.id, { isRead: true })
-    }
-  }
-
-  const handleToggleStar = (id: string, e: React.MouseEvent) => {
-    e.stopPropagation()
-    const mail = mails.find(m => m.id === id)
-    if (mail) updateMailInStore(id, { isStarred: !mail.isStarred })
-  }
-
-  const handleDecrypt = async () => {
-    if (!vaultPassword || !currentSelectedMail) return
-    setDecrypting(true)
-    setDecryptError("")
+    // 1. Get contacts from localStorage
+    let contacts: any[] = []
     try {
-      const user = JSON.parse(localStorage.getItem("user") || "{}")
-      if (currentSelectedMail.message?.includes("-----BEGIN PGP MESSAGE-----")) {
-        const decrypted = await decryptMessage(currentSelectedMail.message, user.privateKey, vaultPassword)
-        setDecryptedContent(decrypted)
-      } else {
-        const { signData } = await import("@/utils/gun")
-        await signData("unlock", user.privateKey, vaultPassword)
-        setDecryptedContent(currentSelectedMail.message)
-      }
-      setVaultPassword("")
-    } catch {
-      setDecryptError("Incorrect Vault Passphrase")
-    } finally {
-      setDecrypting(false)
+      const cached = localStorage.getItem(`contacts_${userEmail}`)
+      if (cached) contacts = JSON.parse(cached)
+    } catch (e) {
+      console.warn(e)
     }
+    const trustedEmails = new Set(contacts.map((c: any) => c.email?.toLowerCase()))
+
+    // 2. Filter for incoming mails from untrusted senders
+    const incomingUntrusted = mails.filter(m => {
+      const sender = m.senderEmail?.toLowerCase()
+      const receiver = m.receiverEmail?.toLowerCase()
+      
+      const isIncoming = receiver === userEmail.toLowerCase()
+      const isFromSelf = sender === userEmail.toLowerCase()
+      const isTrusted = trustedEmails.has(sender)
+
+      // We show them if they are incoming, not from ourselves, and not trusted
+      return isIncoming && !isFromSelf && !isTrusted
+    })
+
+    // 3. Group by sender email to get unique list of senders
+    const senderMap = new Map<string, { email: string; name: string; time: string; count: number }>()
+    incomingUntrusted.forEach(m => {
+      const sender = m.senderEmail
+      if (!sender) return
+      
+      const existing = senderMap.get(sender)
+      if (existing) {
+        existing.count++
+        if (new Date(m.time).getTime() > new Date(existing.time).getTime()) {
+          existing.time = m.time
+        }
+      } else {
+        senderMap.set(sender, {
+          email: sender,
+          name: m.senderName || sender.split("@")[0],
+          time: m.time,
+          count: 1
+        })
+      }
+    })
+
+    return Array.from(senderMap.values()).sort((a, b) => new Date(b.time).getTime() - new Date(a.time).getTime())
+  }, [mails, userEmail, contactsTrigger])
+
+  const handleAcceptSender = (senderEmail: string) => {
+    trustSender(senderEmail, userEmail)
+    setContactsTrigger(prev => prev + 1)
+    
+    // Update all mails from this sender to "inbox"
+    mails.forEach(m => {
+      if (m.senderEmail?.toLowerCase() === senderEmail.toLowerCase()) {
+        updateMailInStore(m.id, { status: "inbox", flaggedReason: "", spamScore: 0 })
+      }
+    })
   }
 
-  const renderDetailView = () => {
-    const mail = currentSelectedMail
-    if (!mail) return null
+  const handleDeleteSender = (senderEmail: string) => {
+    mails.forEach(m => {
+      if (m.senderEmail?.toLowerCase() === senderEmail.toLowerCase()) {
+        updateMailInStore(m.id, { status: "purged", purgedAt: Date.now() })
+      }
+    })
+    setContactsTrigger(prev => prev + 1)
+  }
 
-    return (
-      <div style={{ flex: 1, display: "flex", flexDirection: "column", background: "var(--bg-body)", padding: "40px", borderLeft: "1px solid var(--border-gold)", position: "relative" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: "20px", marginBottom: "32px" }}>
-          <button
-            onClick={() => setSelectedMail(null)}
-            style={{
-              background: "var(--bg-card)", border: "1px solid var(--border-gold)", borderRadius: "50%",
-              width: "40px", height: "40px", display: "flex", alignItems: "center", justifyContent: "center",
-              cursor: "pointer", color: "var(--gold-mid)"
-            }}
-          >
-            <ArrowLeft size={18} />
-          </button>
-          <h1 style={{ fontSize: "24px", fontWeight: "700", color: "var(--text-bright)", margin: 0, fontFamily: "Inter, sans-serif", flex: 1 }}>
-            {mail.subject || "(No subject)"}
-          </h1>
-        </div>
-
-        <div style={{ display: "flex", alignItems: "center", marginBottom: "24px" }}>
-          <div style={{
-            width: "48px", height: "48px", borderRadius: "50%", background: "rgba(212, 175, 55, 0.1)",
-            display: "flex", alignItems: "center", justifyContent: "center",
-            fontSize: "16px", fontWeight: "800", color: "var(--gold-mid)", marginRight: "16px"
-          }}>
-            {(mail.senderName || mail.senderEmail || "U").charAt(0).toUpperCase()}
-          </div>
-          <div style={{ flex: 1 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-              <span style={{ fontSize: "16px", fontWeight: "700", color: "var(--text-bright)" }}>{mail.senderName || mail.senderEmail}</span>
-              <span style={{ fontSize: "14px", color: "var(--text-dim)" }}>{mail.time}</span>
-              <span style={{ fontSize: "10px", background: "rgba(212, 175, 55, 0.1)", color: "var(--gold-mid)", border: "1px solid rgba(212, 175, 55, 0.2)", padding: "2px 8px", borderRadius: "10px", fontWeight: "800" }}>REQUEST</span>
-            </div>
-            <div style={{ fontSize: "14px", color: "var(--text-dim)", marginTop: "4px" }}>
-              {mail.senderEmail} <span style={{ margin: "0 4px" }}>→</span> {mail.receiverEmail}
-            </div>
-          </div>
-        </div>
-
-        {/* Info bar */}
-        <div style={{ background: "rgba(212, 175, 55, 0.05)", border: "1px solid rgba(212, 175, 55, 0.2)", borderRadius: "8px", padding: "16px 20px", display: "flex", alignItems: "center", gap: "16px", marginBottom: "32px" }}>
-          <UserCheck size={24} color="var(--gold-mid)" />
-          <div style={{ flex: 1 }}>
-            <div style={{ fontSize: "14px", color: "var(--gold-mid)", fontWeight: "700", marginBottom: "2px" }}>New Connection Request</div>
-            <p style={{ fontSize: "12px", color: "var(--text-dim)", margin: 0 }}>This sender is not in your trusted contacts. Accept to move to inbox and trust them.</p>
-          </div>
-          <button
-            onClick={() => { trustSender(mail.senderEmail, userEmail); updateMailInStore(mail.id, { status: "inbox", flaggedReason: "", spamScore: 0 }); setSelectedMail(null) }}
-            style={{ background: "var(--gold-mid)", color: "var(--bg-body)", border: "none", borderRadius: "8px", padding: "8px 16px", fontSize: "12px", fontWeight: "700", cursor: "pointer" }}
-          >
-            Accept & Trust
-          </button>
-        </div>
-
-        <div style={{ display: "flex", gap: "12px", marginBottom: "40px" }}>
-          <button onClick={() => { updateMailInStore(mail.id, { status: "purged" }); setSelectedMail(null) }} style={{ background: "var(--bg-card)", color: "#e84234", border: "1px solid rgba(232, 66, 52, 0.2)", borderRadius: "8px", padding: "10px 24px", fontSize: "13px", fontWeight: "700", cursor: "pointer", display: "flex", alignItems: "center", gap: "8px" }}>
-            <Trash2 size={16} /> Delete
-          </button>
-          <button onClick={() => updateMailInStore(mail.id, { isStarred: !mail.isStarred })} style={{ background: "var(--bg-card)", color: "var(--text-bright)", border: "1px solid var(--border-gold)", borderRadius: "8px", padding: "10px 20px", fontSize: "13px", fontWeight: "600", cursor: "pointer" }}>
-            <Star size={16} fill={mail.isStarred ? "var(--gold-mid)" : "none"} color={mail.isStarred ? "var(--gold-mid)" : "var(--text-bright)"} />
-          </button>
-        </div>
-
-        <div style={{ flex: 1, overflowY: "auto" }}>
-          {!decryptedContent ? (
-            <div style={{ background: "var(--bg-card)", border: "1px solid var(--border-gold)", borderRadius: "16px", padding: "40px", textAlign: "center", maxWidth: "480px", margin: "0 auto" }}>
-              <div style={{ color: "var(--gold-mid)", marginBottom: "16px" }}>
-                <ShieldCheck size={48} />
-              </div>
-              <h3 style={{ color: "var(--text-bright)", marginBottom: "12px" }}>Secure Decryption</h3>
-              <p style={{ color: "var(--text-dim)", fontSize: "14px", marginBottom: "24px" }}>Enter your vault passphrase to read this message.</p>
-              <input type="password" placeholder="Vault Passphrase" value={vaultPassword} onChange={(e) => setVaultPassword(e.target.value)} style={{ width: "100%", background: "var(--bg-panel)", border: "1px solid var(--border-gold)", borderRadius: "8px", padding: "12px 16px", color: "var(--text-bright)", fontSize: "14px", outline: "none", textAlign: "center", marginBottom: "16px", boxSizing: "border-box" }} onKeyDown={(e) => e.key === "Enter" && handleDecrypt()} />
-              {decryptError && <p style={{ color: "#E84234", fontSize: "12px", marginBottom: "16px" }}>{decryptError}</p>}
-              <button onClick={handleDecrypt} disabled={decrypting} style={{ width: "100%", background: "linear-gradient(135deg, var(--gold-rich), var(--gold-light))", color: "var(--bg-body)", border: "none", borderRadius: "8px", padding: "12px", fontWeight: "700", cursor: "pointer", opacity: decrypting ? 0.6 : 1 }}>{decrypting ? "Decrypting..." : "Unlock Message"}</button>
-            </div>
-          ) : (
-            <div style={{ color: "var(--text-bright)", fontSize: "15px", lineHeight: "1.6", whiteSpace: "pre-wrap", fontFamily: "Inter, sans-serif" }}>{decryptedContent || mail.message}</div>
-          )}
-        </div>
-      </div>
-    )
+  const handleRefresh = () => {
+    setIsRefreshing(true)
+    // Trigger local state re-evaluation
+    setMails([...getMails("all")])
+    setTimeout(() => setIsRefreshing(false), 800)
   }
 
   return (
-    <div style={{ display: "flex", height: "100%", background: "var(--bg-body)", overflow: "hidden" }}>
-      <div style={{
-        width: selectedMail ? "360px" : "100%", display: "flex", flexDirection: "column", flexShrink: 0,
-        transition: "width 0.3s ease", maxWidth: selectedMail ? "360px" : "1200px", margin: selectedMail ? "0" : "0 auto",
-        willChange: "width"
-      }}>
-        <div style={{ padding: "24px 24px 12px" }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
-            <div>
-              <h2 style={{ fontSize: "24px", fontWeight: "700", color: "var(--text-bright)", margin: 0, marginBottom: "4px" }}>Connection Requests</h2>
-              <p style={{ fontSize: "13px", color: "var(--text-muted)", margin: 0 }}>Mails from senders who are not in your trusted contacts.</p>
-            </div>
-            <button
-              onClick={() => { setIsRefreshing(true); initMailStore(userEmail, true) }}
-              style={{ background: "none", border: "none", color: "var(--text-dim)", cursor: "pointer" }}
-            >
-              <RefreshCw size={18} style={{ animation: isRefreshing ? "spin 1s linear infinite" : "none" }} />
-            </button>
+    <div style={{ height: "100%", background: "var(--bg-body)", overflowY: "auto", padding: "40px 24px" }}>
+      <div style={{ maxWidth: "680px", margin: "0 auto" }}>
+        
+        {/* Header */}
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "32px" }}>
+          <div>
+            <h2 style={{ fontSize: "28px", fontWeight: "700", color: "var(--text-bright)", margin: 0, fontFamily: "Cinzel, serif" }}>
+              Connection Requests
+            </h2>
+            <p style={{ fontSize: "14px", color: "var(--text-muted)", marginTop: "4px" }}>
+              Senders who are not in your trusted contacts. All their emails land in your Inbox, but you can manage their trust status here.
+            </p>
           </div>
-
-          <div style={{ position: "relative", marginBottom: "16px" }}>
-            <Search size={16} color="var(--text-dim)" style={{ position: "absolute", left: "12px", top: "50%", transform: "translateY(-50%)" }} />
-            <input type="text" placeholder="Search requests..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} style={{ width: "100%", background: "var(--bg-card)", border: "1px solid var(--border-gold)", borderRadius: "10px", padding: "10px 12px 10px 40px", color: "var(--text-bright)", fontSize: "13px", outline: "none", boxSizing: "border-box" }} />
-          </div>
-        </div>
-
-        <div style={{
-          display: "flex", alignItems: "center", gap: "16px",
-          padding: "12px 24px", borderBottom: "1px solid var(--border-gold)",
-          background: "rgba(212, 175, 55, 0.02)"
-        }}>
           <button
-            onClick={handleToggleSelectAll}
-            style={{
-              display: "flex", alignItems: "center", gap: "10px",
-              background: "none", border: "none", color: isAllSelected ? "var(--gold-mid)" : "var(--text-dim)",
-              fontSize: "13px", fontWeight: "600", cursor: "pointer", padding: "4px 8px",
-              borderRadius: "6px", transition: "all 0.2s"
+            onClick={handleRefresh}
+            style={{ 
+              background: "none", border: "none", color: "var(--text-dim)", 
+              cursor: "pointer", display: "flex", alignItems: "center",
+              transition: "color 0.2s, transform 0.3s"
             }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.color = "var(--gold-mid)"
+              e.currentTarget.style.transform = "rotate(180deg)"
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.color = "var(--text-dim)"
+              e.currentTarget.style.transform = "rotate(0deg)"
+            }}
+            title="Refresh Requests"
           >
-            <div style={{
-              width: "18px", height: "18px", borderRadius: "4px",
-              border: `2px solid ${isAllSelected ? "var(--gold-mid)" : "var(--text-dim)"}`,
-              background: isAllSelected ? "var(--gold-mid)" : "transparent",
-              display: "flex", alignItems: "center", justifyContent: "center"
-            }}>
-              {isAllSelected && <Check size={12} color="var(--bg-body)" strokeWidth={4} />}
-            </div>
-            <span>Select All</span>
+            <RefreshCw size={20} style={{ animation: isRefreshing ? "spin 1s linear infinite" : "none" }} />
           </button>
-
-          {selectedIds.size > 0 && (
-            <div style={{ display: "flex", alignItems: "center", gap: "12px", marginLeft: "auto" }}>
-              <span style={{ fontSize: "12px", color: "var(--gold-mid)", fontWeight: "600" }}>{selectedIds.size} selected</span>
-              <button onClick={handleBulkAccept} style={{ background: "rgba(212, 175, 55, 0.1)", color: "var(--gold-mid)", border: "1px solid rgba(212, 175, 55, 0.3)", borderRadius: "8px", padding: "6px 12px", fontSize: "12px", fontWeight: "700", cursor: "pointer" }}>Accept All</button>
-              <button onClick={handleBulkDelete} style={{ background: "#e84234", color: "#fff", border: "none", borderRadius: "8px", padding: "6px 12px", fontSize: "12px", fontWeight: "700", cursor: "pointer" }}>Delete</button>
-            </div>
-          )}
         </div>
 
-        <div style={{ flex: 1, overflowY: "auto" }}>
-          {filteredMails.length === 0 ? (
-            <div style={{ padding: "80px 24px", textAlign: "center" }}>
-              <UserCheck size={48} color="var(--gold-mid)" style={{ marginBottom: "16px", opacity: 0.4 }} />
-              <p style={{ color: "var(--text-dim)", fontSize: "15px" }}>No pending requests</p>
-              <p style={{ color: "var(--text-muted)", fontSize: "13px", marginTop: "4px" }}>All clear! New mails from unknown senders will appear here.</p>
+        {/* Request cards list */}
+        <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+          {untrustedSenders.length === 0 ? (
+            <div style={{ background: "var(--bg-card)", border: "1px solid var(--border-gold)", borderRadius: "16px", padding: "60px 24px", textAlign: "center" }}>
+              <UserCheck size={56} color="var(--gold-mid)" style={{ marginBottom: "20px", opacity: 0.6 }} />
+              <h3 style={{ color: "var(--text-bright)", fontSize: "18px", margin: "0 0 8px" }}>All Senders Trusted</h3>
+              <p style={{ color: "var(--text-dim)", fontSize: "14px", margin: 0 }}>
+                You have no pending connection requests.
+              </p>
             </div>
           ) : (
-            filteredMails.map(mail => (
-              <MailRow
-                key={mail.id}
-                mail={mail}
-                isSelected={selectedMail?.id === mail.id}
-                onOpen={openMail}
-                onToggleSelection={toggleSelection}
-                isSelectedInBulk={selectedIds.has(mail.id)}
-                onToggleStar={handleToggleStar}
-                badge={{ label: "Request", color: "var(--gold-mid)" }}
-              />
+            untrustedSenders.map(sender => (
+              <div 
+                key={sender.email}
+                style={{
+                  background: "var(--bg-card)",
+                  border: "1px solid var(--border-gold)",
+                  borderRadius: "14px",
+                  padding: "20px 24px",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: "24px",
+                  boxShadow: "0 10px 30px rgba(0,0,0,0.5), 0 0 0 1px rgba(212, 175, 55, 0.05)",
+                  transition: "transform 0.2s ease, border-color 0.2s ease"
+                }}
+              >
+                <div style={{ display: "flex", alignItems: "center", gap: "16px", flex: 1 }}>
+                  <div style={{
+                    width: "48px", height: "48px", borderRadius: "50%", background: "rgba(212, 175, 55, 0.1)",
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    fontSize: "18px", fontWeight: "800", color: "var(--gold-mid)", border: "1px solid rgba(212, 175, 55, 0.15)"
+                  }}>
+                    {sender.name.charAt(0).toUpperCase()}
+                  </div>
+                  <div style={{ minWidth: 0 }}>
+                    <h3 style={{ margin: 0, fontSize: "16px", color: "var(--text-bright)", fontWeight: "700", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                      {sender.name}
+                    </h3>
+                    <p style={{ margin: "2px 0 0", fontSize: "13px", color: "var(--text-muted)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                      {sender.email}
+                    </p>
+                    <div style={{ display: "flex", alignItems: "center", gap: "6px", marginTop: "6px" }}>
+                      <AlertCircle size={12} color="var(--gold-mid)" />
+                      <span style={{ fontSize: "11px", color: "var(--gold-mid)", fontWeight: "600" }}>
+                        Received {sender.count} message{sender.count > 1 ? "s" : ""}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+                
+                <div style={{ display: "flex", gap: "12px", flexShrink: 0 }}>
+                  <button
+                    onClick={() => handleAcceptSender(sender.email)}
+                    style={{
+                      background: "linear-gradient(135deg, var(--gold-rich), var(--gold-light))",
+                      color: "var(--bg-body)", border: "none", borderRadius: "8px",
+                      padding: "10px 20px", fontSize: "12px", fontWeight: "700",
+                      cursor: "pointer", transition: "transform 0.2s ease, opacity 0.2s"
+                    }}
+                    onMouseEnter={(e) => e.currentTarget.style.transform = "scale(1.03)"}
+                    onMouseLeave={(e) => e.currentTarget.style.transform = "scale(1)"}
+                  >
+                    Accept & Trust
+                  </button>
+                  <button
+                    onClick={() => handleDeleteSender(sender.email)}
+                    style={{
+                      background: "none", border: "1px solid rgba(232, 66, 52, 0.3)",
+                      color: "#e84234", borderRadius: "8px",
+                      padding: "10px 20px", fontSize: "12px", fontWeight: "700",
+                      cursor: "pointer", transition: "all 0.2s ease"
+                    }}
+                    onMouseEnter={(e) => e.currentTarget.style.background = "rgba(232, 66, 52, 0.05)"}
+                    onMouseLeave={(e) => e.currentTarget.style.background = "none"}
+                  >
+                    Delete Mails
+                  </button>
+                </div>
+              </div>
             ))
           )}
         </div>
       </div>
-      {renderDetailView()}
     </div>
   )
 }
-
 
 export default function RequestsPage() {
   return (
     <Suspense fallback={null}>
       <RequestsPageContent />
     </Suspense>
-  );
+  )
 }

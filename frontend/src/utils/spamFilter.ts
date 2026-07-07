@@ -136,9 +136,9 @@ export const filterIncomingMail = async (
     }
   }
 
-  // ── Step 6: Unknown sender, low score → request folder ──
+  // ── Step 6: Unknown sender, low score → inbox ──
   return {
-    status:        "request",
+    status:        "inbox",
     flaggedReason: "Unknown sender",
     spamScore:     score,
   }

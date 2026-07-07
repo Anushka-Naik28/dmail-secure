@@ -188,7 +188,7 @@ export const getMails = (status: string) => {
   } else if (status === "request") {
     result = mails.filter((m) => m.status === "request" && isReceiver(m)).sort(newestFirst)
   } else if (status === "inbox") {
-    result = mails.filter((m) => isReceiver(m) && (m.status === "inbox" || m.status === "outbox")).sort(newestFirst)
+    result = mails.filter((m) => isReceiver(m) && (m.status === "inbox" || m.status === "outbox" || m.status === "request")).sort(newestFirst)
   } else {
     result = mails.filter((m) => m.status === status).sort(newestFirst)
   }
