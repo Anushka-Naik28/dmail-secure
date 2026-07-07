@@ -37,6 +37,7 @@ export default function ComposeWindow({
   defaultMessage = "",
 }: ComposeWindowProps) {
   const [recipientEmail, setRecipientEmail] = useState(defaultTo)
+  const [isFocused, setIsFocused] = useState(false)
   const [subject, setSubject]               = useState(defaultSubject)
   const [message, setMessage]               = useState(defaultMessage)
   const [status, setStatus]                 = useState<StatusType>("idle")
@@ -253,22 +254,26 @@ export default function ComposeWindow({
         <div style={{ display: "flex", alignItems: "center", gap: "20px", marginBottom: "12px" }}>
           <span style={{ fontSize: "11px", fontWeight: "800", color: "var(--text-dim)", width: "60px" }}>TO</span>
           <div style={{ flex: 1, display: "flex", flexWrap: "wrap", gap: "8px", alignItems: "center" }}>
-            {recipientEmail && recipientEmail.includes("@") ? (
-              <div style={{ 
-                display: "flex", 
-                alignItems: "center", 
-                gap: "6px",
-                background: "rgba(212, 175, 55, 0.15)", 
-                color: "var(--gold-mid)", 
-                padding: "4px 12px", 
-                borderRadius: "4px", 
-                fontSize: "13px", 
-                fontWeight: "600" 
-              }}>
+            {recipientEmail && recipientEmail.includes("@") && recipientEmail.split("@")[1].includes(".") && !isFocused ? (
+              <div 
+                onClick={() => setIsFocused(true)}
+                style={{ 
+                  display: "flex", 
+                  alignItems: "center", 
+                  gap: "6px",
+                  background: "rgba(212, 175, 55, 0.15)", 
+                  color: "var(--gold-mid)", 
+                  padding: "4px 12px", 
+                  borderRadius: "4px", 
+                  fontSize: "13px", 
+                  fontWeight: "600",
+                  cursor: "text"
+                }}
+              >
                 {recipientEmail}
                 <button
                   type="button"
-                  onClick={() => setRecipientEmail("")}
+                  onClick={(e) => { e.stopPropagation(); setRecipientEmail(""); setIsFocused(true); }}
                   style={{
                     background: "none",
                     border: "none",
@@ -291,6 +296,9 @@ export default function ComposeWindow({
                 placeholder="recipient@dmail.com"
                 value={recipientEmail}
                 onChange={(e) => setRecipientEmail(e.target.value)}
+                onFocus={() => setIsFocused(true)}
+                onBlur={() => setIsFocused(false)}
+                autoFocus={isFocused}
               />
             )}
           </div>
