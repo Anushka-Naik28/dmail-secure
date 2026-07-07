@@ -298,23 +298,32 @@ export const pinMailInStore = (id: string, isPinned: boolean) => {
 }
 
 export const getCounts = (email: string) => {
-  let counts = { inbox: 0, starred: 0, spam: 0, drafts: 0, request: 0, sent: 0, trash: 0 }
+  let counts = { inbox: 0, starred: 0, spam: 0, drafts: 0, request: 0, sent: 0, trash: 0, allUnread: 0 }
+  const lowerEmail = email.trim().toLowerCase()
   
   // Single pass over the Map values
   allMailsMap.forEach(m => {
+    const receiver = m.receiverEmail?.trim().toLowerCase()
+    const sender = m.senderEmail?.trim().toLowerCase()
+
     // 🛡️ [Global Starred Count]
     // Starred mails include both sent and received, as long as they aren't deleted.
     if (m.isStarred && m.status !== "trash" && m.status !== "purged" && m.senderStatus !== "deleted") {
       counts.starred++
     }
 
-    if (m.receiverEmail === email) {
-      if ((m.status === "inbox" || m.status === "outbox") && !m.isRead) counts.inbox++
+    if (receiver === lowerEmail) {
+      if ((m.status === "inbox" || m.status === "outbox" || m.status === "request") && !m.isRead) counts.inbox++
       if (m.status === "spam") counts.spam++
       if (m.status === "request") counts.request++
       if (m.status === "trash") counts.trash++
+
+      // Count unread received messages for All Mail (excluding spam, trash, purged)
+      if (m.status !== "spam" && m.status !== "trash" && m.status !== "purged" && !m.isRead) {
+        counts.allUnread++
+      }
     }
-    if (m.senderEmail === email) {
+    if (sender === lowerEmail) {
       if (m.status !== "draft" && m.status !== "purged" && m.status !== "trash") counts.sent++
       if (m.status === "draft") counts.drafts++
     }

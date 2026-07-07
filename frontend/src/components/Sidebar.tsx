@@ -25,7 +25,7 @@ function Sidebar({ isOpen, onCompose }: SidebarProps) {
   const pathname = usePathname()
   const router = useRouter()
 
-  const [counts, setCounts] = useState({ inbox: 0, starred: 0, spam: 0, drafts: 0, request: 0, sent: 0 })
+  const [counts, setCounts] = useState({ inbox: 0, starred: 0, spam: 0, drafts: 0, request: 0, sent: 0, allUnread: 0 })
   const [showLogoutModal, setShowLogoutModal] = useState(false)
   const [userName, setUserName] = useState("")
   const [userEmail, setUserEmail] = useState("")
@@ -137,13 +137,6 @@ function Sidebar({ isOpen, onCompose }: SidebarProps) {
               <div style={{ display: "flex", alignItems: "center", width: "100%", gap: "12px" }}>
                 <Send size={20} style={{ opacity: isActive("sent") ? 1 : 0.7 }} />
                 <span style={{ flex: 1, fontSize: "14px" }}>Sent</span>
-                {counts.sent > 0 && (
-                  <span className="count-badge" style={{ 
-                    fontSize: "11px", fontWeight: "700",
-                    background: "rgba(212, 175, 55,0.1)", color: "var(--gold-mid)",
-                    padding: "2px 8px", borderRadius: "10px"
-                  }}>{counts.sent}</span>
-                )}
               </div>
             </Link>
 
@@ -182,6 +175,14 @@ function Sidebar({ isOpen, onCompose }: SidebarProps) {
               <div style={{ display: "flex", alignItems: "center", width: "100%", gap: "12px" }}>
                 <Mail size={20} style={{ opacity: isActive("all-mail") ? 1 : 0.7 }} />
                 <span style={{ flex: 1, fontSize: "14px" }}>All Mail</span>
+                {counts.allUnread > 0 && (
+                  <span className="count-badge" style={{ 
+                    fontSize: "11px", fontWeight: "700",
+                    background: isActive("all-mail") ? "var(--gold-mid)" : "rgba(212, 175, 55,0.1)",
+                    color: isActive("all-mail") ? "var(--bg-body)" : "var(--gold-mid)",
+                    padding: "2px 8px", borderRadius: "10px"
+                  }}>{counts.allUnread}</span>
+                )}
               </div>
             </Link>
 
