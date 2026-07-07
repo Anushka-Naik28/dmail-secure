@@ -301,6 +301,24 @@ export const getCounts = (email: string) => {
   let counts = { inbox: 0, starred: 0, spam: 0, drafts: 0, request: 0, sent: 0, trash: 0, allUnread: 0 }
   const lowerEmail = email.trim().toLowerCase()
   
+  // Load trusted contacts to identify untrusted senders
+  const trustedEmails = new Set<string>()
+  if (typeof window !== "undefined") {
+    try {
+      const cached = localStorage.getItem(`contacts_${lowerEmail}`)
+      if (cached) {
+        const contacts = JSON.parse(cached)
+        contacts.forEach((c: any) => {
+          if (c.email) trustedEmails.add(c.email.toLowerCase())
+        })
+      }
+    } catch (e) {
+      console.warn(e)
+    }
+  }
+
+  const untrustedSendersSet = new Set<string>()
+
   // Single pass over the Map values
   allMailsMap.forEach(m => {
     const receiver = m.receiverEmail?.trim().toLowerCase()
@@ -315,12 +333,16 @@ export const getCounts = (email: string) => {
     if (receiver === lowerEmail) {
       if ((m.status === "inbox" || m.status === "outbox" || m.status === "request") && !m.isRead) counts.inbox++
       if (m.status === "spam") counts.spam++
-      if (m.status === "request") counts.request++
       if (m.status === "trash") counts.trash++
 
       // Count unread received messages for All Mail (excluding spam, trash, purged)
       if (m.status !== "spam" && m.status !== "trash" && m.status !== "purged" && !m.isRead) {
         counts.allUnread++
+      }
+
+      // Check if it's from an untrusted sender (excluding spam, trash, purged and self)
+      if (sender && sender !== lowerEmail && !trustedEmails.has(sender) && m.status !== "trash" && m.status !== "purged" && m.status !== "spam") {
+        untrustedSendersSet.add(sender)
       }
     }
     if (sender === lowerEmail) {
@@ -328,6 +350,9 @@ export const getCounts = (email: string) => {
       if (m.status === "draft") counts.drafts++
     }
   })
+
+  // Set the requests count to the number of unique untrusted senders
+  counts.request = untrustedSendersSet.size
 
   return counts
 }
