@@ -167,12 +167,19 @@ const MASTER_IP = "192.168.0.130";
 
 export const getLocalNode = (port: number) => {
   if (typeof window !== "undefined") {
-    // Default to localhost (127.0.0.1) for local development
-    const host = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1" 
-      ? "127.0.0.1" 
-      : window.location.hostname;
-    const protocol = window.location.protocol === "https:" ? "https:" : "http:";
-    return `${protocol}//${host}:${port}`;
+    const isLocal = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1";
+    if (isLocal) {
+      const protocol = window.location.protocol === "https:" ? "https:" : "http:";
+      return `${protocol}//127.0.0.1:${port}`;
+    } else {
+      // In production, the backend is hosted at the Render domain. Other ports (like 5001, 9094) do not
+      // exist in production, but for the backend port (8765) we return the Render URL.
+      if (port === 8765) {
+        return `https://dmail-secure.onrender.com`;
+      }
+      const protocol = window.location.protocol === "https:" ? "https:" : "http:";
+      return `${protocol}//${window.location.hostname}:${port}`;
+    }
   }
   return `http://127.0.0.1:${port}`;
 }

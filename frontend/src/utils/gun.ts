@@ -1,6 +1,6 @@
 import Gun from "gun"
 import CryptoJS from "crypto-js"
-import { uploadToIPFS, fetchFromIPFS, uploadPublicKey, fetchPublicKeyFromIPFS, uploadToPinata, uploadFileToPinata, isPinataConfigured } from "@/utils/ipfs"
+import { uploadToIPFS, fetchFromIPFS, uploadPublicKey, fetchPublicKeyFromIPFS, uploadToPinata, uploadFileToPinata, isPinataConfigured, getLocalNode } from "@/utils/ipfs"
 import { uploadDataToWeb3 } from "@/utils/web3storage"
 import { addToQueue, isOnline } from "@/utils/offlineQueue"
 import { cacheMail, getCachedMails, updateCachedMail } from "@/utils/mailCache"
@@ -1203,6 +1203,34 @@ export const db = {
         const sender = JSON.parse(localStorage.getItem("user") || "{}")
 
         try {
+          if (!isDmail) {
+            // ── SMTP Relay for External Providers ──
+            try {
+              const relayBase = getLocalNode(8765)
+              console.log(`✉️ [SMTP] Requesting outbound mail relay via: ${relayBase}/api/send-smtp`)
+              const response = await fetch(`${relayBase}/api/send-smtp`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  senderEmail: mail.senderEmail,
+                  receiverEmail: mail.receiverEmail,
+                  subject: mail.subject,
+                  message: mail.message
+                })
+              })
+
+              if (!response.ok) {
+                const resData = await response.json().catch(() => ({}))
+                const errMsg = resData.error || `HTTP error ${response.status}`
+                throw new Error(`SMTP Relay Failed: ${errMsg}`)
+              }
+
+              console.log("✅ [SMTP] Mail relayed successfully via gateway.")
+            } catch (smtpErr: any) {
+              console.error("❌ [SMTP] Relay attempt failed:", smtpErr)
+              return reject(smtpErr)
+            }
+          }
           // 1. ⚡ [Fast Path] Attempt Instant Push via Relay
           if (recipient && recipient.fastPublicKey && sender.fastPrivateKey) {
             import("./relay").then(async ({ pushMail, isRelayConnected }) => {

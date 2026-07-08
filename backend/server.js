@@ -4,8 +4,33 @@ import Gun from "gun"
 import os from "os"
 import dotenv from "dotenv"
 import multer from "multer"
+import nodemailer from "nodemailer"
 
 dotenv.config()
+
+// ── SMTP Transporter Configuration ──
+const SMTP_HOST = process.env.SMTP_HOST || ""
+const SMTP_PORT = parseInt(process.env.SMTP_PORT || "587")
+const SMTP_SECURE = process.env.SMTP_SECURE === "true" // true for 465, false for other ports
+const SMTP_USER = process.env.SMTP_USER || ""
+const SMTP_PASS = process.env.SMTP_PASS || ""
+const SMTP_FROM = process.env.SMTP_FROM || ""
+
+let transporter = null
+if (SMTP_HOST && SMTP_USER && SMTP_PASS) {
+  console.log(`✉️ [SMTP] Configuring transporter for ${SMTP_HOST}:${SMTP_PORT} (secure: ${SMTP_SECURE})`)
+  transporter = nodemailer.createTransport({
+    host: SMTP_HOST,
+    port: SMTP_PORT,
+    secure: SMTP_SECURE,
+    auth: {
+      user: SMTP_USER,
+      pass: SMTP_PASS,
+    },
+  })
+} else {
+  console.warn("⚠️ [SMTP] SMTP credentials not fully configured in environment. External email relay is disabled.")
+}
 
 const app = express()
 const server = http.createServer(app)
@@ -100,6 +125,51 @@ app.post("/pin-file", upload.single("file"), async (req, res) => {
     res.json({ cid: result.IpfsHash })
   } catch (err) {
     res.status(500).send(err.message)
+  }
+})
+
+// ── SMTP Outbound Relay Endpoint ──
+app.post("/api/send-smtp", async (req, res) => {
+  if (!transporter) {
+    return res.status(503).json({
+      error: "SMTP relay is not configured on this server.",
+    })
+  }
+
+  const { senderEmail, receiverEmail, subject, message } = req.body
+
+  if (!senderEmail || !receiverEmail || !subject || !message) {
+    return res.status(400).json({
+      error: "Missing required fields (senderEmail, receiverEmail, subject, message).",
+    })
+  }
+
+  try {
+    console.log(`✉️ [SMTP] Relaying mail from ${senderEmail} to ${receiverEmail}`)
+    
+    const mailOptions = {
+      from: SMTP_FROM || senderEmail,
+      to: receiverEmail,
+      subject: subject,
+      text: message,
+      headers: {
+        "X-Mailer": "DMail Secure Gateway",
+        "X-DMail-Sender": senderEmail,
+      }
+    }
+
+    const info = await transporter.sendMail(mailOptions)
+    console.log(`✅ [SMTP] Mail sent successfully: ${info.messageId}`)
+    
+    res.json({
+      success: true,
+      messageId: info.messageId,
+    })
+  } catch (err) {
+    console.error("❌ [SMTP] Failed to send email via SMTP:", err)
+    res.status(500).json({
+      error: `Failed to relay email: ${err.message}`,
+    })
   }
 })
 
