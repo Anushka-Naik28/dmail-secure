@@ -56,7 +56,7 @@ export const initSMTPTransporter = () => {
   const config = getGatewayConfig()
   
   if (config.smtpHost && config.smtpUser && config.smtpPass) {
-    console.log(`✉️ [SMTP] Initializing transporter for ${config.smtpHost}:${config.smtpPort} (secure: ${config.smtpSecure})`)
+    console.log(`✉️ [SMTP] Initializing custom user transporter for ${config.smtpHost}:${config.smtpPort} (secure: ${config.smtpSecure})`)
     smtpTransporter = nodemailer.createTransport({
       host: config.smtpHost,
       port: parseInt(config.smtpPort || "587"),
@@ -64,6 +64,17 @@ export const initSMTPTransporter = () => {
       auth: {
         user: config.smtpUser,
         pass: config.smtpPass,
+      },
+    })
+  } else if (process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS) {
+    console.log(`✉️ [SMTP] Fallback to default server transporter: ${process.env.SMTP_HOST}:${process.env.SMTP_PORT}`)
+    smtpTransporter = nodemailer.createTransport({
+      host: process.env.SMTP_HOST,
+      port: parseInt(process.env.SMTP_PORT || "587"),
+      secure: process.env.SMTP_SECURE === "true" || process.env.SMTP_SECURE === true,
+      auth: {
+        user: process.env.SMTP_USER,
+        pass: process.env.SMTP_PASS,
       },
     })
   } else {
@@ -101,8 +112,11 @@ export const sendSMTPEmail = async ({ senderEmail, receiverEmail, subject, messa
     }
   }
 
+  const smtpUser = config.smtpUser || process.env.SMTP_USER || ""
+  const smtpFrom = config.smtpFrom || process.env.SMTP_FROM || "DMail Gateway"
+
   const mailOptions = {
-    from: `${config.smtpFrom || "DMail Gateway"} <${config.smtpUser}>`,
+    from: `${smtpFrom} <${smtpUser}>`,
     to: receiverEmail,
     subject: subject,
     text: message,
