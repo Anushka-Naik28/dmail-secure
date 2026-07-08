@@ -29,6 +29,7 @@ interface Message {
   attachments?: any[]
   isDecrypted?: boolean
   decryptedMessage?: string
+  html?: string
 }
 
 interface ConversationViewProps {
@@ -369,6 +370,42 @@ export default function ConversationView({
                                 style={{ fontSize: "11px", padding: "6px 16px", borderRadius: "20px" }}
                               >UNLOCK MESSAGE</button>
                             </div>
+                          </div>
+                        ) : msg.html ? (
+                          <div style={{ borderRadius: "8px", overflow: "hidden", background: "#ffffff", border: "1px solid var(--border-gold)", width: "100%" }}>
+                            <iframe
+                              srcDoc={`
+                                <html>
+                                  <head>
+                                    <style>
+                                      body {
+                                        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+                                        font-size: 14px;
+                                        line-height: 1.6;
+                                        color: #333333;
+                                        background-color: #ffffff;
+                                        margin: 16px;
+                                        word-break: break-word;
+                                      }
+                                      img {
+                                        max-width: 100%;
+                                        height: auto;
+                                      }
+                                    </style>
+                                  </head>
+                                  <body>
+                                    ${msg.html}
+                                  </body>
+                                </html>
+                              `}
+                              sandbox="allow-popups"
+                              style={{
+                                width: "100%",
+                                border: "none",
+                                minHeight: "350px",
+                                background: "#ffffff",
+                              }}
+                            />
                           </div>
                         ) : (
                           // Custom renderer for golden left-border lines

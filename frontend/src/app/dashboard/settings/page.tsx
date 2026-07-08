@@ -8,15 +8,15 @@ import {
   Trash2, Key, Eye, EyeOff, Shield, 
   Download, Folder, FolderOpen, RefreshCw, 
   CheckCircle2, XCircle, AlertCircle, Sparkles,
-  ArrowRight, Mail, Database, Palette, Layout, Wallet, Search
+  ArrowRight, Mail, Database, Palette, Layout, Wallet, Search, Send
 } from "lucide-react"
 import BlockchainVerify from "@/components/BlockchainVerify"
 import { getLabels, saveLabel, deleteLabel, createId, PRESET_COLORS, type Label } from "@/utils/labelStore"
 import { copyToClipboard } from "@/utils/clipboard"
-import { isPinataConfigured } from "@/utils/ipfs"
+import { isPinataConfigured, getLocalNode } from "@/utils/ipfs"
 
 
-type Section = "general" | "security" | "blockchain" | "labels" | "network" | "storage"
+type Section = "general" | "security" | "blockchain" | "labels" | "network" | "hybridGateway"
 
 export default function SettingsPage() {
   const [activeSection, setActiveSection] = useState<Section>("general")
@@ -58,6 +58,22 @@ export default function SettingsPage() {
   const [importKeyError, setImportKeyError] = useState("")
   const [importKeySuccess, setImportKeySuccess] = useState(false)
 
+  // ── SMTP / IMAP Hybrid Gateway ──
+  const [smtpHost, setSmtpHost] = useState("smtp.gmail.com")
+  const [smtpPort, setSmtpPort] = useState("587")
+  const [smtpSecure, setSmtpSecure] = useState("false")
+  const [smtpUser, setSmtpUser] = useState("")
+  const [smtpPass, setSmtpPass] = useState("")
+  const [smtpFrom, setSmtpFrom] = useState("DMail Gateway")
+  const [imapHost, setImapHost] = useState("imap.gmail.com")
+  const [imapPort, setImapPort] = useState("993")
+  const [imapSecure, setImapSecure] = useState("true")
+  const [imapUser, setImapUser] = useState("")
+  const [imapPass, setImapPass] = useState("")
+  const [gatewaySaved, setGatewaySaved] = useState(false)
+  const [gatewayError, setGatewayError] = useState("")
+  const [gatewayLoading, setGatewayLoading] = useState(false)
+
   useEffect(() => {
     if (typeof window === "undefined") return
     const u = JSON.parse(localStorage.getItem("user") || "{}")
@@ -67,6 +83,34 @@ export default function SettingsPage() {
     setInboxLayout(localStorage.getItem("settings_inboxLayout") || "comfortable")
     setEmailPreview(localStorage.getItem("settings_emailPreview") || "2lines")
     setLabels(getLabels(u.email || ""))
+    
+    // Fetch Gateway Config
+    if (u.email && u.password) {
+      const relayBase = getLocalNode(8765)
+      fetch(`${relayBase}/api/gateway/config`, {
+        headers: {
+          "X-DMail-Email": u.email,
+          "X-DMail-Password": u.password
+        }
+      })
+      .then(res => res.json())
+      .then(data => {
+        if (data && !data.error) {
+          setSmtpHost(data.smtpHost || "smtp.gmail.com")
+          setSmtpPort(data.smtpPort || "587")
+          setSmtpSecure(data.smtpSecure !== undefined ? String(data.smtpSecure) : "false")
+          setSmtpUser(data.smtpUser || "")
+          setSmtpPass(data.smtpPass || "")
+          setSmtpFrom(data.smtpFrom || "DMail Gateway")
+          setImapHost(data.imapHost || "imap.gmail.com")
+          setImapPort(data.imapPort || "993")
+          setImapSecure(data.imapSecure !== undefined ? String(data.imapSecure) : "true")
+          setImapUser(data.imapUser || "")
+          setImapPass(data.imapPass || "")
+        }
+      })
+      .catch(err => console.error("Failed to load gateway config:", err))
+    }
     // Check if the backend relay proxy has Pinata configured
     isPinataConfigured().then(isReady => {
       setPinataStatus(isReady ? "ok" : "fail")
@@ -150,6 +194,56 @@ export default function SettingsPage() {
       setRegenError("Key generation failed. Please try again.")
     } finally {
       setRegenLoading(false)
+    }
+  }
+
+  const handleSaveGatewayConfig = async () => {
+    setGatewayError("")
+    setGatewaySaved(false)
+    setGatewayLoading(true)
+
+    try {
+      const u = JSON.parse(localStorage.getItem("user") || "{}")
+      if (!u.email || !u.password) {
+        throw new Error("You must be logged in to configure the hybrid gateway.")
+      }
+
+      const config = {
+        smtpHost,
+        smtpPort: parseInt(smtpPort),
+        smtpSecure: smtpSecure === "true",
+        smtpUser,
+        smtpPass,
+        smtpFrom,
+        imapHost,
+        imapPort: parseInt(imapPort),
+        imapSecure: imapSecure === "true",
+        imapUser,
+        imapPass
+      }
+
+      const relayBase = getLocalNode(8765)
+      const res = await fetch(`${relayBase}/api/gateway/config`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-DMail-Email": u.email,
+          "X-DMail-Password": u.password
+        },
+        body: JSON.stringify(config)
+      })
+
+      const data = await res.json()
+      if (!res.ok || data.error) {
+        throw new Error(data.error || `HTTP error ${res.status}`)
+      }
+
+      setGatewaySaved(true)
+      setTimeout(() => setGatewaySaved(false), 3000)
+    } catch (err: any) {
+      setGatewayError(err.message || "Failed to save gateway configuration.")
+    } finally {
+      setGatewayLoading(false)
     }
   }
 
@@ -315,11 +409,12 @@ export default function SettingsPage() {
         }}>Settings</div>
 
         {([
-          { key: "general",    icon: <Settings size={14} />,  label: "General" },
-          { key: "security",   icon: <Lock size={14} />,      label: "Security" },
-          { key: "blockchain", icon: <LinkIcon size={14} />,  label: "Blockchain" },
-          { key: "labels",     icon: <Tag size={14} />,       label: "Labels" },
-          { key: "network",    icon: <Globe size={14} />,     label: "Network" },
+          { key: "general",       icon: <Settings size={14} />,  label: "General" },
+          { key: "security",      icon: <Lock size={14} />,      label: "Security" },
+          { key: "blockchain",    icon: <LinkIcon size={14} />,  label: "Blockchain" },
+          { key: "labels",        icon: <Tag size={14} />,       label: "Labels" },
+          { key: "network",       icon: <Globe size={14} />,     label: "Network" },
+          { key: "hybridGateway", icon: <Mail size={14} />,      label: "Hybrid Gateway" },
         ] as { key: Section; icon: React.ReactNode; label: string }[]).map((s) => (
           <button key={s.key} style={sectionBtn(s.key)} onClick={() => setActiveSection(s.key)}>
             <span style={{ marginRight: "10px", display: "inline-flex", alignItems: "center" }}>{s.icon}</span>{s.label}
@@ -1048,6 +1143,147 @@ export default function SettingsPage() {
                 </div>
               ))}
             </div>
+          </>
+        )}
+
+        {/* ══ HYBRID GATEWAY ══════════════════════════════════ */}
+        {activeSection === "hybridGateway" && (
+          <>
+            <h2 className="mail-detail-subject" style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+              <Mail size={22} color="var(--gold-mid)" /> Hybrid Email Gateway
+            </h2>
+            <p style={{ fontSize: "12px", color: "var(--text-muted)", marginBottom: "20px", lineHeight: "1.7" }}>
+              Bridge your decentralized DMail account with legacy email providers. Send emails using standard SMTP relays, and synchronize replies using secure IMAP connections.
+            </p>
+
+            {gatewaySaved && (
+              <div style={{
+                position: "fixed", top: "24px", right: "24px", zIndex: 1000,
+                background: "rgba(76,175,110,1)", borderRadius: "12px",
+                padding: "12px 24px", fontSize: "14px", color: "#fff",
+                fontWeight: "700", boxShadow: "var(--shadow-deep)",
+                animation: "fadeUp 0.3s ease both",
+              }}>
+                <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                  <CheckCircle size={16} /> Gateway settings saved successfully!
+                </div>
+              </div>
+            )}
+
+            {gatewayError && (
+              <div style={{
+                background: "rgba(217,48,37,0.1)", border: "1px solid rgba(217,48,37,0.3)",
+                borderRadius: "8px", padding: "10px 16px", marginBottom: "16px",
+                fontSize: "12px", color: "#e84234"
+              }}>
+                {gatewayError}
+              </div>
+            )}
+
+            {/* SMTP Settings */}
+            <div style={card}>
+              <div style={{ marginBottom: "16px", borderBottom: "1px solid var(--border-gold)", paddingBottom: "10px" }}>
+                <div style={{ fontSize: "15px", fontWeight: "700", color: "var(--text-bright)", marginBottom: "4px", display: "flex", alignItems: "center", gap: "8px" }}>
+                  <Send size={16} color="var(--gold-mid)" /> Outbound SMTP Settings
+                </div>
+                <div style={{ fontSize: "12px", color: "var(--text-muted)" }}>Configure details to send mail to standard providers</div>
+              </div>
+
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px", marginBottom: "16px" }}>
+                <div>
+                  <span style={labelStyle}>SMTP Host</span>
+                  <input className="auth-input" style={{ width: "100%" }} value={smtpHost} onChange={e => setSmtpHost(e.target.value)} placeholder="smtp.gmail.com" />
+                </div>
+                <div>
+                  <span style={labelStyle}>SMTP Port</span>
+                  <input className="auth-input" style={{ width: "100%" }} value={smtpPort} onChange={e => setSmtpPort(e.target.value)} placeholder="587" />
+                </div>
+              </div>
+
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px", marginBottom: "16px" }}>
+                <div>
+                  <span style={labelStyle}>SMTP Username (Email)</span>
+                  <input className="auth-input" style={{ width: "100%" }} value={smtpUser} onChange={e => setSmtpUser(e.target.value)} placeholder="your-email@gmail.com" />
+                </div>
+                <div>
+                  <span style={labelStyle}>SMTP Password (App Password)</span>
+                  <input type="password" className="auth-input" style={{ width: "100%" }} value={smtpPass} onChange={e => setSmtpPass(e.target.value)} placeholder="••••••••••••••••" />
+                </div>
+              </div>
+
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px", marginBottom: "16px" }}>
+                <div>
+                  <span style={labelStyle}>Sender Display Name</span>
+                  <input className="auth-input" style={{ width: "100%" }} value={smtpFrom} onChange={e => setSmtpFrom(e.target.value)} placeholder="DMail Gateway" />
+                </div>
+                <div>
+                  <span style={labelStyle}>Security Option</span>
+                  <select style={selectStyle} value={smtpSecure} onChange={e => setSmtpSecure(e.target.value)}>
+                    <option value="false">STARTTLS (Port 587)</option>
+                    <option value="true">SSL/TLS (Port 465)</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            {/* IMAP Settings */}
+            <div style={card}>
+              <div style={{ marginBottom: "16px", borderBottom: "1px solid var(--border-gold)", paddingBottom: "10px" }}>
+                <div style={{ fontSize: "15px", fontWeight: "700", color: "var(--text-bright)", marginBottom: "4px", display: "flex", alignItems: "center", gap: "8px" }}>
+                  <Mail size={16} color="var(--gold-mid)" /> Inbound IMAP Settings
+                </div>
+                <div style={{ fontSize: "12px", color: "var(--text-muted)" }}>Configure details to sync replies and attachments back to DMail</div>
+              </div>
+
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px", marginBottom: "16px" }}>
+                <div>
+                  <span style={labelStyle}>IMAP Host</span>
+                  <input className="auth-input" style={{ width: "100%" }} value={imapHost} onChange={e => setImapHost(e.target.value)} placeholder="imap.gmail.com" />
+                </div>
+                <div>
+                  <span style={labelStyle}>IMAP Port</span>
+                  <input className="auth-input" style={{ width: "100%" }} value={imapPort} onChange={e => setImapPort(e.target.value)} placeholder="993" />
+                </div>
+              </div>
+
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px", marginBottom: "16px" }}>
+                <div>
+                  <span style={labelStyle}>IMAP Username</span>
+                  <input className="auth-input" style={{ width: "100%" }} value={imapUser} onChange={e => setImapUser(e.target.value)} placeholder="your-email@gmail.com" />
+                </div>
+                <div>
+                  <span style={labelStyle}>IMAP Password (App Password)</span>
+                  <input type="password" className="auth-input" style={{ width: "100%" }} value={imapPass} onChange={e => setImapPass(e.target.value)} placeholder="••••••••••••••••" />
+                </div>
+              </div>
+
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px", marginBottom: "16px" }}>
+                <div>
+                  <span style={labelStyle}>Security Option</span>
+                  <select style={selectStyle} value={imapSecure} onChange={e => setImapSecure(e.target.value)}>
+                    <option value="true">SSL/TLS (Port 993)</option>
+                    <option value="false">STARTTLS (Port 143)</option>
+                  </select>
+                </div>
+                <div />
+              </div>
+            </div>
+
+            <button 
+              onClick={handleSaveGatewayConfig} 
+              disabled={gatewayLoading}
+              style={{
+                padding: "12px 28px",
+                background: "linear-gradient(135deg, var(--gold-rich), var(--gold-light))",
+                border: "none", borderRadius: "10px", cursor: gatewayLoading ? "not-allowed" : "pointer",
+                fontSize: "13px", fontWeight: "700", color: "var(--bg-body)",
+                fontFamily: "Raleway, sans-serif",
+                boxShadow: "0 2px 12px rgba(212, 175, 55,0.3)",
+                opacity: gatewayLoading ? 0.6 : 1
+              }}
+            >
+              {gatewayLoading ? "Saving Configuration..." : "Save Gateway Configuration"}
+            </button>
           </>
         )}
       </div>

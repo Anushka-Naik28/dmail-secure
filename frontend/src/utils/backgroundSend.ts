@@ -1,6 +1,6 @@
 import { db, encryptMessage, sendMailNow, computePoW, hashMailContent } from "@/utils/gun"
 import { autoSaveContact } from "@/utils/contacts"
-import { uploadFileToIPFS, uploadToIPFS } from "@/utils/ipfs"
+import { uploadFileToIPFS, uploadToIPFS, getLocalNode } from "@/utils/ipfs"
 import { updateMailInStore } from "@/utils/mailStore"
 import { hybridEncrypt } from "@/utils/cryptoHybrid"
 
@@ -12,6 +12,8 @@ interface SendMailParams {
   attachments: any[]
   scheduleDate?: string
   scheduleTime?: string
+  cc?: string
+  bcc?: string
 }
 
 /**
@@ -25,7 +27,9 @@ export const sendMailInBackground = async ({
   message,
   attachments,
   scheduleDate,
-  scheduleTime
+  scheduleTime,
+  cc,
+  bcc
 }: SendMailParams) => {
   const recipientEmail = rawRecipient.trim().toLowerCase()
   const mailId = `${Date.now()}_${Math.random().toString(36).slice(2)}`
@@ -53,7 +57,7 @@ export const sendMailInBackground = async ({
       console.log(`🚀 [BackgroundSend] Starting dispatch for ${recipientEmail}`)
       
       // Step A: Recipient Lookup
-      const isDmail = recipientEmail.endsWith("@dmail.com") || recipientEmail.endsWith("@securemail.com")
+      const isDmail = recipientEmail.endsWith("@dmail") || recipientEmail.endsWith("@dmail.com") || recipientEmail.endsWith("@securemail.com")
       let recipientData = null
       if (isDmail) {
         recipientData = await new Promise<any>(res => db.getUser(recipientEmail, res))
@@ -146,8 +150,49 @@ export const sendMailInBackground = async ({
         attachmentCount: (finalAttachments as any[]).length,
         attachments: finalAttachments,
         pow: { nonce: finalNonce, hash: finalHash, difficulty: finalHash ? 1 : 0 },
+        cc: cc || "",
+        bcc: bcc || "",
       }
  
+      // SMTP Routing Check for legacy email domains
+      if (!isDmail) {
+        console.log(`✉️ [BackgroundSend] External recipient detected: ${recipientEmail}. Relaying via SMTP Gateway...`)
+        const relayBase = getLocalNode(8765)
+        
+        // Map attachments for nodemailer
+        const attachmentPayload = (finalAttachments as any[]).map(att => ({
+          cid: att.cid,
+          name: att.name || att.filename,
+          type: att.type || att.contentType,
+          size: att.size
+        }))
+
+        const response = await fetch(`${relayBase}/api/gateway/send-smtp`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-DMail-Email": user.email,
+            "X-DMail-Password": user.password
+          },
+          body: JSON.stringify({
+            senderEmail: user.email,
+            receiverEmail: recipientEmail,
+            subject,
+            message: message + ipfsRefs,
+            html: (message + ipfsRefs).replace(/\n/g, "<br>"),
+            cc,
+            bcc,
+            attachments: attachmentPayload
+          })
+        })
+
+        const resData = await response.json().catch(() => ({}))
+        if (!response.ok || resData.error) {
+          throw new Error(resData.error || `SMTP relay failed: ${response.statusText}`)
+        }
+        console.log(`✅ [BackgroundSend] SMTP relay successful. Message ID: ${resData.messageId}`)
+      }
+
       // Step C: Dispatch
       if (scheduleDate && scheduleTime) {
         const targetTime = new Date(`${scheduleDate}T${scheduleTime}`).getTime()

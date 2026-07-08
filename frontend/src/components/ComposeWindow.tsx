@@ -52,6 +52,8 @@ export default function ComposeWindow({
   const [showIpfsInput, setShowIpfsInput]   = useState(false)
   const [draftSaved, setDraftSaved]         = useState(false)
   const [encryptionReady, setEncryptionReady] = useState<"checking" | "ready" | "no-key">("checking")
+  const [cc, setCc] = useState("")
+  const [bcc, setBcc] = useState("")
 
   const [storageReady, setStorageReady]   = useState(false)
 
@@ -169,7 +171,9 @@ export default function ComposeWindow({
         message,
         attachments,
         scheduleDate,
-        scheduleTime
+        scheduleTime,
+        cc,
+        bcc
       })
 
       // Close immediately
@@ -305,7 +309,21 @@ export default function ComposeWindow({
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: "20px", marginBottom: "12px" }}>
           <span style={{ fontSize: "11px", fontWeight: "800", color: "var(--text-dim)", width: "60px" }}>CC</span>
-          <input style={{ flex: 1, background: "none", border: "none", outline: "none", color: "var(--text-bright)", fontSize: "13px" }} />
+          <input 
+            style={{ flex: 1, background: "none", border: "none", outline: "none", color: "var(--text-bright)", fontSize: "13px" }} 
+            placeholder="cc@email.com" 
+            value={cc}
+            onChange={(e) => setCc(e.target.value)}
+          />
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: "20px", marginBottom: "12px" }}>
+          <span style={{ fontSize: "11px", fontWeight: "800", color: "var(--text-dim)", width: "60px" }}>BCC</span>
+          <input 
+            style={{ flex: 1, background: "none", border: "none", outline: "none", color: "var(--text-bright)", fontSize: "13px" }} 
+            placeholder="bcc@email.com" 
+            value={bcc}
+            onChange={(e) => setBcc(e.target.value)}
+          />
         </div>
       </div>
 

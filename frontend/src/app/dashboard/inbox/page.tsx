@@ -408,22 +408,16 @@ function InboxPageContent() {
     setSendingReply(true)
     try {
       const user = JSON.parse(localStorage.getItem("user") || "{}")
-      const { sendMailNow } = await import("@/utils/gun")
-      const newMail = {
-        senderEmail: user.email,
-        senderName: user.name,
-        receiverEmail: recipient,
+      const { sendMailInBackground } = await import("@/utils/backgroundSend")
+      
+      sendMailInBackground({
+        user,
+        recipientEmail: recipient,
         subject: `${replyMode === "reply" ? "Re:" : "Fwd:"} ${currentSelectedMail.subject}`,
         message: replyText,
         attachments: replyAttachments,
-        hasAttachments: replyAttachments.length > 0,
-        attachmentCount: replyAttachments.length,
-        time: new Date().toLocaleString(),
-        isReply: replyMode === "reply",
-        isForward: replyMode === "forward",
-        originalId: currentSelectedMail.id
-      }
-      await sendMailNow(newMail)
+      })
+
       setReplyMode(null)
       setReplyText("")
       setForwardRecipient("")
@@ -584,8 +578,48 @@ function InboxPageContent() {
         </div>
 
         <div style={{ flex: 1, overflowY: "auto", display: "flex", flexDirection: "column" }}>
-          <div style={{ color: "var(--text-bright)", fontSize: "15px", lineHeight: "1.6", whiteSpace: "pre-wrap", fontFamily: "Inter, sans-serif", marginBottom: "40px" }}>
-            {decrypting ? "Decrypting secure message..." : (decryptedContent || mail.message)}
+          <div style={{ color: "var(--text-bright)", fontSize: "15px", lineHeight: "1.6", whiteSpace: "pre-wrap", fontFamily: "Inter, sans-serif", marginBottom: "40px", width: "100%" }}>
+            {decrypting ? (
+              "Decrypting secure message..."
+            ) : mail.html ? (
+              <div style={{ borderRadius: "8px", overflow: "hidden", background: "#ffffff", border: "1px solid var(--border-gold)", width: "100%" }}>
+                <iframe
+                  srcDoc={`
+                    <html>
+                      <head>
+                        <style>
+                          body {
+                            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+                            font-size: 14px;
+                            line-height: 1.6;
+                            color: #333333;
+                            background-color: #ffffff;
+                            margin: 16px;
+                            word-break: break-word;
+                          }
+                          img {
+                            max-width: 100%;
+                            height: auto;
+                          }
+                        </style>
+                      </head>
+                      <body>
+                        ${mail.html}
+                      </body>
+                    </html>
+                  `}
+                  sandbox="allow-popups"
+                  style={{
+                    width: "100%",
+                    border: "none",
+                    minHeight: "350px",
+                    background: "#ffffff",
+                  }}
+                />
+              </div>
+            ) : (
+              decryptedContent || mail.message
+            )}
           </div>
               {/* Attachments & Reply Section (Condensed) */}
               {replyMode && (

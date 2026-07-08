@@ -4,33 +4,10 @@ import Gun from "gun"
 import os from "os"
 import dotenv from "dotenv"
 import multer from "multer"
-import nodemailer from "nodemailer"
+import { getGatewayConfig, saveGatewayConfig } from "./config_manager.js"
+import { initSMTPTransporter, startIMAPSync, sendSMTPEmail } from "./gateway.js"
 
 dotenv.config()
-
-// ── SMTP Transporter Configuration ──
-const SMTP_HOST = process.env.SMTP_HOST || ""
-const SMTP_PORT = parseInt(process.env.SMTP_PORT || "587")
-const SMTP_SECURE = process.env.SMTP_SECURE === "true" // true for 465, false for other ports
-const SMTP_USER = process.env.SMTP_USER || ""
-const SMTP_PASS = process.env.SMTP_PASS || ""
-const SMTP_FROM = process.env.SMTP_FROM || ""
-
-let transporter = null
-if (SMTP_HOST && SMTP_USER && SMTP_PASS) {
-  console.log(`✉️ [SMTP] Configuring transporter for ${SMTP_HOST}:${SMTP_PORT} (secure: ${SMTP_SECURE})`)
-  transporter = nodemailer.createTransport({
-    host: SMTP_HOST,
-    port: SMTP_PORT,
-    secure: SMTP_SECURE,
-    auth: {
-      user: SMTP_USER,
-      pass: SMTP_PASS,
-    },
-  })
-} else {
-  console.warn("⚠️ [SMTP] SMTP credentials not fully configured in environment. External email relay is disabled.")
-}
 
 const app = express()
 const server = http.createServer(app)
@@ -128,50 +105,7 @@ app.post("/pin-file", upload.single("file"), async (req, res) => {
   }
 })
 
-// ── SMTP Outbound Relay Endpoint ──
-app.post("/api/send-smtp", async (req, res) => {
-  if (!transporter) {
-    return res.status(503).json({
-      error: "SMTP relay is not configured on this server.",
-    })
-  }
-
-  const { senderEmail, receiverEmail, subject, message } = req.body
-
-  if (!senderEmail || !receiverEmail || !subject || !message) {
-    return res.status(400).json({
-      error: "Missing required fields (senderEmail, receiverEmail, subject, message).",
-    })
-  }
-
-  try {
-    console.log(`✉️ [SMTP] Relaying mail from ${senderEmail} to ${receiverEmail}`)
-    
-    const mailOptions = {
-      from: SMTP_FROM || senderEmail,
-      to: receiverEmail,
-      subject: subject,
-      text: message,
-      headers: {
-        "X-Mailer": "DMail Secure Gateway",
-        "X-DMail-Sender": senderEmail,
-      }
-    }
-
-    const info = await transporter.sendMail(mailOptions)
-    console.log(`✅ [SMTP] Mail sent successfully: ${info.messageId}`)
-    
-    res.json({
-      success: true,
-      messageId: info.messageId,
-    })
-  } catch (err) {
-    console.error("❌ [SMTP] Failed to send email via SMTP:", err)
-    res.status(500).json({
-      error: `Failed to relay email: ${err.message}`,
-    })
-  }
-})
+// ── SMTP Relay route deprecated ──
 
 // ── IPFS Fetch Proxy ──
 // Allows remote devices to fetch content from this master node's local IPFS daemon
@@ -216,6 +150,94 @@ const gun = Gun({
 })
 
 console.log("📡 [Relay] Running as primary relay — all devices should connect to this server")
+
+// ── Initialize Hybrid Gateway SMTP and IMAP Workers ──
+initSMTPTransporter()
+startIMAPSync(gun)
+
+// ── Verification Middleware ──
+const verifyUser = (req, res, next) => {
+  const email = req.headers["x-dmail-email"]
+  const password = req.headers["x-dmail-password"]
+
+  if (!email || !password) {
+    return res.status(401).json({ error: "Unauthorized: Missing authentication credentials." })
+  }
+
+  const cleanEmail = email.trim().toLowerCase()
+  gun.get("securemail_users").get(cleanEmail).once((user) => {
+    if (user && user.password === password) {
+      req.user = user
+      next()
+    } else {
+      res.status(401).json({ error: "Unauthorized: Invalid email or password." })
+    }
+  })
+}
+
+// ── GET Gateway Config ──
+app.get("/api/gateway/config", verifyUser, (req, res) => {
+  const config = getGatewayConfig()
+  const redacted = { ...config }
+  if (redacted.smtpPass) redacted.smtpPass = "********"
+  if (redacted.imapPass) redacted.imapPass = "********"
+  res.json(redacted)
+})
+
+// ── POST Gateway Config ──
+app.post("/api/gateway/config", verifyUser, async (req, res) => {
+  try {
+    const config = req.body
+    const existing = getGatewayConfig()
+
+    if (config.smtpPass === "********") {
+      config.smtpPass = existing.smtpPass || ""
+    }
+    if (config.imapPass === "********") {
+      config.imapPass = existing.imapPass || ""
+    }
+
+    const saved = saveGatewayConfig(config)
+    if (!saved) {
+      return res.status(500).json({ error: "Failed to save configuration to disk." })
+    }
+
+    initSMTPTransporter()
+    startIMAPSync(gun)
+
+    res.json({ success: true, message: "Configuration saved and gateway reloaded." })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// ── POST Gateway Send SMTP ──
+app.post("/api/gateway/send-smtp", verifyUser, async (req, res) => {
+  const { senderEmail, receiverEmail, subject, message, html, attachments, cc, bcc } = req.body
+
+  if (!senderEmail || !receiverEmail || !subject || !message) {
+    return res.status(400).json({
+      error: "Missing required fields (senderEmail, receiverEmail, subject, message).",
+    })
+  }
+
+  try {
+    const messageId = await sendSMTPEmail({
+      senderEmail,
+      receiverEmail,
+      subject,
+      message,
+      html,
+      attachments,
+      cc,
+      bcc
+    })
+    res.json({ success: true, messageId })
+  } catch (err) {
+    console.error("❌ [Gateway Send] SMTP delivery failed:", err.message)
+    res.status(500).json({ error: `SMTP relay failed: ${err.message}` })
+  }
+})
 
 // ── Gun debug logging ──
 gun.on("out", { "#": { "*": "" } })
