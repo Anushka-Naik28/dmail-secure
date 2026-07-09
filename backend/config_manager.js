@@ -11,13 +11,13 @@ const DEFAULT_CONFIG = {
   smtpPort: 587,
   smtpSecure: false,
   smtpUser: "etherxinnovdmail@gmail.com",
-  smtpPass: "NexEther@2025",
+  smtpPass: "hhnxsxkjpretvpzn",
   smtpFrom: "EtherXDmail <etherxinnovdmail@gmail.com>",
   imapHost: "imap.gmail.com",
   imapPort: 993,
   imapSecure: true,
   imapUser: "etherxinnovdmail@gmail.com",
-  imapPass: "NexEther@2025"
+  imapPass: "hhnxsxkjpretvpzn"
 };
 
 export const getGatewayConfig = () => {
