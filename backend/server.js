@@ -172,8 +172,22 @@ const verifyUser = (req, res, next) => {
     } else {
       res.status(401).json({ error: "Unauthorized: Invalid email or password." })
     }
-  })
 }
+
+// ── POST Gateway Register Auth (Sync Credentials) ──
+app.post("/api/gateway/register-auth", async (req, res) => {
+  const { email, password, publicKey } = req.body
+  if (!email || !password) {
+    return res.status(400).json({ error: "Missing email or password." })
+  }
+  const cleanEmail = email.trim().toLowerCase()
+  gun.get("securemail_users").get(cleanEmail).put({
+    email: cleanEmail,
+    password: password,
+    publicKey: publicKey || ""
+  })
+  res.json({ success: true, message: "Credentials registered directly on backend." })
+})
 
 // ── GET Gateway Config ──
 app.get("/api/gateway/config", verifyUser, (req, res) => {

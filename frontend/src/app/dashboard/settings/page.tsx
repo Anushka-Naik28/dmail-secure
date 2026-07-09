@@ -84,14 +84,21 @@ export default function SettingsPage() {
     setEmailPreview(localStorage.getItem("settings_emailPreview") || "2lines")
     setLabels(getLabels(u.email || ""))
     
-    // Fetch Gateway Config
+    // Fetch Gateway Config (Synchronize auth credentials first to prevent GunDB sync race conditions)
     if (u.email && u.password) {
       const relayBase = getLocalNode(8765)
-      fetch(`${relayBase}/api/gateway/config`, {
-        headers: {
-          "X-DMail-Email": u.email,
-          "X-DMail-Password": u.password
-        }
+      fetch(`${relayBase}/api/gateway/register-auth`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: u.email, password: u.password, publicKey: u.publicKey })
+      })
+      .then(() => {
+        return fetch(`${relayBase}/api/gateway/config`, {
+          headers: {
+            "X-DMail-Email": u.email,
+            "X-DMail-Password": u.password
+          }
+        })
       })
       .then(res => res.json())
       .then(data => {
@@ -223,6 +230,12 @@ export default function SettingsPage() {
       }
 
       const relayBase = getLocalNode(8765)
+      await fetch(`${relayBase}/api/gateway/register-auth`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: u.email, password: u.password, publicKey: u.publicKey })
+      })
+
       const res = await fetch(`${relayBase}/api/gateway/config`, {
         method: "POST",
         headers: {
