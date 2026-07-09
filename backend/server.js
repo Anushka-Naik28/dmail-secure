@@ -172,6 +172,7 @@ const verifyUser = (req, res, next) => {
     } else {
       res.status(401).json({ error: "Unauthorized: Invalid email or password." })
     }
+  })
 }
 
 // ── POST Gateway Register Auth (Sync Credentials) ──
