@@ -11,3 +11,5 @@ backend/radata/
 backend/data_pop3/
 backend/*.tmp
 backend/.env
+backend/gateway_config.json
+

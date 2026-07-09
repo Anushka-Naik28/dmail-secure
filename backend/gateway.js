@@ -1,301 +1,295 @@
-import nodemailer from "nodemailer"
-import { ImapFlow } from "imapflow"
-import { simpleParser } from "mailparser"
-import CryptoJS from "crypto-js"
-import { getGatewayConfig } from "./config_manager.js"
+import nodemailer from "nodemailer";
+import { ImapFlow } from "imapflow";
+import { simpleParser } from "mailparser";
+import CryptoJS from "crypto-js";
+import { getGatewayConfig } from "./config_manager.js";
 
-let smtpTransporter = null
-let imapClient = null
-let imapSyncInterval = null
-let isImapRunning = false
+let smtpTransporter = null;
+let imapClient = null;
+let isImapSyncing = false;
+let imapSyncTimeout = null;
 
-// Helper: upload a parsed buffer attachment to Pinata/IPFS
-const uploadAttachmentToIPFS = async (buffer, filename, mimeType, pinataJwt) => {
-  const blob = new Blob([buffer], { type: mimeType || "application/octet-stream" })
-  const formData = new FormData()
-  formData.append("file", blob, filename || `attachment_${Date.now()}`)
-  formData.append("pinataMetadata", JSON.stringify({ name: filename || `attachment_${Date.now()}` }))
-  formData.append("pinataOptions", JSON.stringify({ cidVersion: 1 }))
-
-  const response = await fetch("https://api.pinata.cloud/pinning/pinFileToIPFS", {
-    method: "POST",
-    headers: {
-      "Authorization": `Bearer ${pinataJwt}`,
-    },
-    body: formData,
-  })
-
-  if (!response.ok) {
-    const errText = await response.text()
-    throw new Error(`Pinata upload failed: ${errText}`)
-  }
-
-  const result = await response.json()
-  return result.IpfsHash // returns the CID
-}
-
-// Helper: download attachment content from IPFS to attach to SMTP email
-const fetchAttachmentFromIPFS = async (cid) => {
-  try {
-    const response = await fetch(`https://ipfs.io/ipfs/${cid}`, {
-      signal: AbortSignal.timeout(20000) // 20s timeout
-    })
-    if (!response.ok) throw new Error(`HTTP status ${response.status}`)
-    const arrayBuffer = await response.arrayBuffer()
-    return Buffer.from(arrayBuffer)
-  } catch (err) {
-    console.error(`❌ Failed to fetch attachment ${cid} from IPFS:`, err.message)
-    throw err
-  }
-}
-
-/**
- * Initializes the Nodemailer SMTP transporter using active settings.
- */
+// Initialize SMTP from configuration
 export const initSMTPTransporter = () => {
-  const config = getGatewayConfig()
-  
+  const config = getGatewayConfig();
   if (config.smtpHost && config.smtpUser && config.smtpPass) {
-    console.log(`✉️ [SMTP] Initializing custom user transporter for ${config.smtpHost}:${config.smtpPort} (secure: ${config.smtpSecure})`)
+    console.log(`✉️ [SMTP] Initializing transporter for ${config.smtpHost}:${config.smtpPort}`);
     smtpTransporter = nodemailer.createTransport({
       host: config.smtpHost,
       port: parseInt(config.smtpPort || "587"),
       secure: config.smtpSecure === true || config.smtpSecure === "true",
       auth: {
         user: config.smtpUser,
-        pass: config.smtpPass,
-      },
-    })
-  } else if (process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS) {
-    console.log(`✉️ [SMTP] Fallback to default server transporter: ${process.env.SMTP_HOST}:${process.env.SMTP_PORT}`)
-    smtpTransporter = nodemailer.createTransport({
-      host: process.env.SMTP_HOST,
-      port: parseInt(process.env.SMTP_PORT || "587"),
-      secure: process.env.SMTP_SECURE === "true" || process.env.SMTP_SECURE === true,
-      auth: {
-        user: process.env.SMTP_USER,
-        pass: process.env.SMTP_PASS,
-      },
-    })
-  } else {
-    smtpTransporter = null
-    console.warn("⚠️ [SMTP] SMTP relay is not configured or disabled.")
-  }
-}
-
-/**
- * Relays an email to SMTP network.
- */
-export const sendSMTPEmail = async ({ senderEmail, receiverEmail, subject, message, html, attachments = [], cc = "", bcc = "" }) => {
-  if (!smtpTransporter) {
-    initSMTPTransporter()
-    if (!smtpTransporter) {
-      throw new Error("SMTP Gateway is not configured on this server.")
-    }
-  }
-
-  const config = getGatewayConfig()
-  const mailAttachments = []
-
-  // Resolve IPFS CIDs to Buffers for SMTP delivery
-  if (attachments && attachments.length > 0) {
-    for (const att of attachments) {
-      if (att.cid) {
-        console.log(`⬇️ [SMTP] Fetching attachment content from IPFS for: ${att.name || att.filename}`)
-        const buffer = await fetchAttachmentFromIPFS(att.cid)
-        mailAttachments.push({
-          filename: att.name || att.filename || "attachment",
-          content: buffer,
-          contentType: att.type || att.contentType
-        })
+        pass: config.smtpPass
       }
+    });
+  } else {
+    smtpTransporter = null;
+    console.warn("⚠️ [SMTP] SMTP credentials not fully configured. Outbound email disabled.");
+  }
+};
+
+// Fetch attachment buffer from IPFS gateway
+const fetchIPFSAttachment = async (cid) => {
+  const gateways = [
+    `https://ipfs.io/ipfs/${cid}`,
+    `https://gateway.pinata.cloud/ipfs/${cid}`,
+    `http://127.0.0.1:8080/ipfs/${cid}`
+  ];
+
+  for (const url of gateways) {
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 10000); // 10s timeout
+      
+      const response = await fetch(url, { signal: controller.signal });
+      clearTimeout(timeout);
+      
+      if (response.ok) {
+        return Buffer.from(await response.arrayBuffer());
+      }
+    } catch (e) {
+      console.warn(`⚠️ [Gateway] Failed to fetch CID ${cid} from ${url}:`, e.message);
+    }
+  }
+  throw new Error(`Failed to fetch attachment content from IPFS for CID ${cid}`);
+};
+
+// Send SMTP Email (handles attachments, CC, BCC, Reply-To)
+export const sendSMTPEmail = async (mailData) => {
+  if (!smtpTransporter) {
+    initSMTPTransporter();
+    if (!smtpTransporter) {
+      throw new Error("SMTP Gateway is not configured on the server.");
     }
   }
 
-  const smtpUser = config.smtpUser || process.env.SMTP_USER || ""
-  const smtpFrom = config.smtpFrom || process.env.SMTP_FROM || "DMail Gateway"
+  const config = getGatewayConfig();
+  const { receiverEmail, subject, message, html, attachments, cc, bcc, replyTo } = mailData;
 
   const mailOptions = {
-    from: `${smtpFrom} <${smtpUser}>`,
+    from: config.smtpFrom || `${config.smtpUser}`,
     to: receiverEmail,
     subject: subject,
     text: message,
     html: html || message.replace(/\n/g, "<br>"),
     cc: cc || undefined,
     bcc: bcc || undefined,
-    attachments: mailAttachments,
+    replyTo: replyTo || undefined,
     headers: {
-      "X-Mailer": "DMail Secure Gateway",
-      "X-DMail-Sender": senderEmail,
+      "X-Mailer": "DMail Hybrid Gateway",
+      "X-DMail-Outbound": "true"
+    }
+  };
+
+  // Download and append IPFS attachments if present
+  if (attachments && attachments.length > 0) {
+    mailOptions.attachments = [];
+    console.log(`📎 [SMTP] Resolving ${attachments.length} attachments from IPFS...`);
+    for (const att of attachments) {
+      if (att.cid) {
+        try {
+          const buffer = await fetchIPFSAttachment(att.cid);
+          mailOptions.attachments.push({
+            filename: att.name || "attachment",
+            content: buffer,
+            contentType: att.type || "application/octet-stream"
+          });
+          console.log(`✅ [SMTP] Resolved attachment: ${att.name} (${att.cid})`);
+        } catch (err) {
+          console.error(`❌ [SMTP] Failed to attach file ${att.name}:`, err.message);
+          throw err;
+        }
+      }
     }
   }
 
-  const info = await smtpTransporter.sendMail(mailOptions)
-  console.log(`✅ [SMTP] Email relayed successfully: ${info.messageId}`)
-  return info.messageId
-}
+  const info = await smtpTransporter.sendMail(mailOptions);
+  console.log(`🚀 [SMTP] Email relayed successfully. Message-ID: ${info.messageId}`);
+  return info;
+};
 
-/**
- * Background IMAP synchronization worker.
- */
-export const startIMAPSync = async (gun) => {
-  // Stop existing worker
-  if (imapSyncInterval) {
-    clearInterval(imapSyncInterval)
-    imapSyncInterval = null
+// Upload attachment to Pinata/IPFS from the backend
+const uploadAttachmentToIPFS = async (buffer, filename, mimeType, pinataJwt) => {
+  if (!pinataJwt) {
+    throw new Error("Pinata JWT not configured on backend");
   }
+  const blob = new Blob([buffer], { type: mimeType || "application/octet-stream" });
+  const formData = new FormData();
+  formData.append("file", blob, filename || `attachment_${Date.now()}`);
+  formData.append("pinataMetadata", JSON.stringify({ name: filename || `attachment_${Date.now()}` }));
+  formData.append("pinataOptions", JSON.stringify({ cidVersion: 1 }));
+
+  const response = await fetch("https://api.pinata.cloud/pinning/pinFileToIPFS", {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${pinataJwt}`
+    },
+    body: formData
+  });
+
+  if (!response.ok) {
+    const errText = await response.text();
+    throw new Error(`Pinata upload failed: ${errText}`);
+  }
+
+  const result = await response.json();
+  return result.IpfsHash;
+};
+
+// Background IMAP Sync Worker
+export const startIMAPSync = async (gun) => {
+  // Stop existing worker/timeouts
+  if (imapSyncTimeout) {
+    clearTimeout(imapSyncTimeout);
+    imapSyncTimeout = null;
+  }
+  
   if (imapClient) {
     try {
-      await imapClient.logout()
-    } catch {}
-    imapClient = null
+      console.log("🔌 [IMAP] Disconnecting existing client...");
+      await imapClient.logout();
+    } catch (e) {}
+    imapClient = null;
   }
-  isImapRunning = false
 
-  const config = getGatewayConfig()
+  const config = getGatewayConfig();
   if (!config.imapHost || !config.imapUser || !config.imapPass) {
-    console.warn("⚠️ [IMAP] IMAP credentials not configured. Two-way sync is disabled.")
-    return
+    console.warn("⚠️ [IMAP] IMAP credentials not fully configured. Inbound sync disabled.");
+    return;
   }
 
-  const PINATA_JWT = process.env.PINATA_JWT || ""
+  console.log(`🔌 [IMAP] Connecting to ${config.imapHost}:${config.imapPort}...`);
 
-  const syncEmails = async () => {
-    if (isImapRunning) return
-    isImapRunning = true
+  imapClient = new ImapFlow({
+    host: config.imapHost,
+    port: parseInt(config.imapPort || "993"),
+    secure: config.imapSecure === true || config.imapSecure === "true",
+    auth: {
+      user: config.imapUser,
+      pass: config.imapPass
+    },
+    logger: false
+  });
 
-    console.log(`📥 [IMAP] Checking inbox for ${config.imapUser}...`)
-    
-    const client = new ImapFlow({
-      host: config.imapHost,
-      port: parseInt(config.imapPort || "993"),
-      secure: config.imapSecure === true || config.imapSecure === "true",
-      auth: {
-        user: config.imapUser,
-        pass: config.imapPass,
-      },
-      logger: false,
-    })
+  const performSync = async () => {
+    if (isImapSyncing) return;
+    isImapSyncing = true;
+    console.log("📥 [IMAP] Starting sync check...");
 
-    imapClient = client
-
+    let lock = null;
     try {
-      await client.connect()
-      
-      const lock = await client.getMailboxLock("INBOX")
-      try {
-        // Read last synchronized UID from GunDB
-        const targetEmail = config.imapUser.toLowerCase().trim()
-        let lastUid = await new Promise((resolve) => {
-          gun.get("imap_sync_status").get(targetEmail).once((data) => {
-            resolve(data?.lastUid || 0)
-          })
-          setTimeout(() => resolve(0), 3000)
-        })
+      await imapClient.connect();
+      lock = await imapClient.getMailboxLock("INBOX");
 
-        const mailbox = await client.select("INBOX")
-        const highestUid = mailbox.uidNext - 1
+      // Query recent emails (last 100 messages)
+      const list = await imapClient.search({ all: true });
+      const recentUids = list.slice(-100); // Last 100 messages
 
-        if (highestUid > lastUid) {
-          console.log(`📥 [IMAP] Syncing UIDs ${lastUid + 1} to ${highestUid}`)
-          const range = `${lastUid + 1}:${highestUid}`
-          
-          for await (let message of client.fetch(range, { uid: true, source: true })) {
-            if (message.uid <= lastUid) continue
-            
+      console.log(`📥 [IMAP] Scanning last ${recentUids.length} messages in INBOX...`);
+
+      const pinataJwt = process.env.PINATA_JWT || "";
+
+      for (const uid of recentUids) {
+        const messageSource = await imapClient.fetchOne(uid, { source: true });
+        if (!messageSource || !messageSource.source) continue;
+
+        const parsed = await simpleParser(messageSource.source);
+        const messageId = parsed.messageId;
+        if (!messageId) continue;
+
+        // Construct unique deterministic GunDB ID
+        const mailId = "smtp_" + CryptoJS.SHA256(messageId).toString();
+
+        // Check if message already exists in GunDB
+        const exists = await new Promise((resolve) => {
+          gun.get("securemail_mails").get(mailId).once((data) => {
+            resolve(!!data);
+          });
+          setTimeout(() => resolve(false), 2000); // 2s timeout fallback
+        });
+
+        if (exists) {
+          continue; // Already synced, skip
+        }
+
+        console.log(`📩 [IMAP] Syncing new email: ${parsed.subject || "(No Subject)"}`);
+
+        // Upload attachments to IPFS
+        const attachments = [];
+        if (parsed.attachments && parsed.attachments.length > 0) {
+          for (const att of parsed.attachments) {
             try {
-              const parsed = await simpleParser(message.source)
-              const messageId = parsed.messageId || `smtp_gen_${Date.now()}_${Math.random().toString(36).slice(2)}`
-              const mailId = `smtp_${CryptoJS.SHA256(messageId).toString()}`
-
-              // Check if mail already exists in GunDB to avoid duplicates
-              const exists = await new Promise((resolve) => {
-                gun.get("securemail_mails").get(mailId).once((data) => {
-                  resolve(!!data)
-                })
-                setTimeout(() => resolve(false), 2000)
-              })
-
-              if (!exists) {
-                console.log(`✉️ [IMAP] Syncing new email: ${parsed.subject || "(No Subject)"}`)
-                
-                // Process attachments (upload to IPFS)
-                const finalAttachments = []
-                if (parsed.attachments && parsed.attachments.length > 0) {
-                  for (const att of parsed.attachments) {
-                    try {
-                      let cid = ""
-                      if (PINATA_JWT) {
-                        cid = await uploadAttachmentToIPFS(att.content, att.filename, att.contentType, PINATA_JWT)
-                      } else {
-                        console.warn("⚠️ [IMAP] Pinata JWT not configured, skipping attachment upload.")
-                        cid = `unconfigured_${Date.now()}`
-                      }
-                      finalAttachments.push({
-                        id: `att_${Date.now()}_${Math.random().toString(36).slice(2)}`,
-                        name: att.filename || "attachment",
-                        size: att.size,
-                        type: att.contentType || "application/octet-stream",
-                        cid: cid
-                      })
-                    } catch (attErr) {
-                      console.error(`❌ Failed to process attachment ${att.filename}:`, attErr.message)
-                    }
-                  }
-                }
-
-                const senderAddress = parsed.from?.value?.[0]?.address || "unknown@email.com"
-                const receiverAddress = parsed.to?.value?.[0]?.address || targetEmail
-
-                const mailObject = {
-                  id: mailId,
-                  messageId: messageId,
-                  senderEmail: senderAddress.toLowerCase().trim(),
-                  receiverEmail: receiverAddress.toLowerCase().trim(),
-                  subject: parsed.subject || "(No Subject)",
-                  message: parsed.text || parsed.html?.replace(/<[^>]*>/g, "") || "", // plain text fallback
-                  html: parsed.html || "",
-                  time: (parsed.date || new Date()).toISOString(),
-                  status: "inbox",
-                  source: "smtp",
-                  isStarred: false,
-                  isRead: false,
-                  hasAttachments: finalAttachments.length > 0,
-                  attachmentCount: finalAttachments.length,
-                  attachments: finalAttachments,
-                }
-
-                // Put full email into GunDB main store
-                gun.get("securemail_mails").get(mailId).put(mailObject)
-
-                // Index it for recipient's fast per-user lookup
-                gun.get(`user_mail_index:${mailObject.receiverEmail}`).get(mailId).put(mailObject)
-                console.log(`✅ [IMAP] Added email ${mailId} to GunDB index for ${mailObject.receiverEmail}`)
+              if (pinataJwt) {
+                console.log(`📎 [IMAP] Uploading attachment ${att.filename} to IPFS...`);
+                const cid = await uploadAttachmentToIPFS(att.content, att.filename, att.contentType, pinataJwt);
+                attachments.push({
+                  name: att.filename,
+                  size: att.size,
+                  type: att.contentType,
+                  cid: cid
+                });
+              } else {
+                console.warn(`⚠️ [IMAP] Pinata not configured. Attachment ${att.filename} skipped.`);
               }
-            } catch (err) {
-              console.error("❌ Failed to parse message:", err.message)
+            } catch (attErr) {
+              console.error(`❌ [IMAP] Failed to upload attachment ${att.filename} to IPFS:`, attErr.message);
             }
           }
-          
-          // Save updated lastUid
-          gun.get("imap_sync_status").get(targetEmail).put({ lastUid: highestUid })
         }
-      } finally {
-        lock.release()
+
+        const cleanEmail = config.imapUser.trim().toLowerCase();
+        
+        // Convert to DMail schema
+        const senderEmail = parsed.from?.value?.[0]?.address || "unknown@email.com";
+        const senderName = parsed.from?.value?.[0]?.name || senderEmail.split("@")[0];
+        
+        const mailObj = {
+          id: mailId,
+          senderEmail: senderEmail,
+          senderName: senderName,
+          receiverEmail: cleanEmail,
+          subject: parsed.subject || "(No Subject)",
+          message: parsed.text || parsed.textAsHtml || "",
+          html: parsed.html || parsed.textAsHtml || "",
+          time: (parsed.date || new Date()).toISOString(),
+          status: "inbox",
+          source: "smtp",
+          hasAttachments: attachments.length > 0,
+          attachmentCount: attachments.length,
+          attachments: attachments,
+          isRead: false,
+          isStarred: false,
+          isPinned: false
+        };
+
+        // Write directly to GunDB
+        gun.get("securemail_mails").get(mailId).put(mailObj);
+        gun.get(`user_mail_index:${cleanEmail}`).get(mailId).put(mailObj);
+
+        // Also write to sender index so it matches standard GunDB indexing structure
+        gun.get(`user_mail_index:${senderEmail.toLowerCase()}`).get(mailId).put(mailObj);
+
+        console.log(`✅ [IMAP] Synced: ${mailObj.subject} (ID: ${mailId})`);
       }
-      
-      await client.logout()
-      console.log("🔌 [IMAP] Sync complete, logged out.")
     } catch (err) {
-      console.error("❌ [IMAP] Connection or sync failed:", err.message)
+      console.error("❌ [IMAP] Error during sync:", err.message);
     } finally {
-      isImapRunning = false
+      if (lock) {
+        try {
+          lock.release();
+        } catch (e) {}
+      }
+      isImapSyncing = false;
+      try {
+        await imapClient.logout();
+      } catch (e) {}
     }
-  }
 
-  // Initial check
-  syncEmails()
+    // Schedule next polling interval (every 2 minutes)
+    imapSyncTimeout = setTimeout(performSync, 120000);
+  };
 
-  // Run poll every 30 seconds
-  imapSyncInterval = setInterval(syncEmails, 30000)
-}
+  // Run the first sync immediately
+  performSync();
+};
