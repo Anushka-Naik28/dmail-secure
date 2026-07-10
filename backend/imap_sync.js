@@ -9,6 +9,39 @@ let imapClient = null;
 let isImapSyncing = false;
 let imapSyncTimeout = null;
 
+// Normalize subject by removing Re:/Fwd: prefixes and whitespace
+export const normalizeSubject = (subject) => {
+  if (!subject) return "";
+  return subject
+    .trim()
+    .toLowerCase()
+    .replace(/^(re|fwd|fw|reply|aw|rv|vs|antwort|odp|ref):\s*/i, "")
+    .replace(/\s+/g, " ")
+    .trim();
+};
+
+// Index an outgoing or incoming email for thread matching
+export const indexOutgoingMessage = (messageId, dmailId, threadId, userEmail, subject, gun) => {
+  if (!messageId || !gun) return;
+  const cleanMsgId = messageId.trim();
+  console.log(`📌 [Threading] Indexing message relationship: ${cleanMsgId} -> Thread: ${threadId}`);
+  
+  // Index by Message-ID
+  gun.get("securemail_message_ids").get(cleanMsgId).put({
+    threadId: threadId,
+    dmailId: dmailId,
+    userEmail: userEmail.toLowerCase()
+  });
+
+  // Index by subject for fallback
+  const norm = normalizeSubject(subject);
+  if (norm) {
+    gun.get("securemail_subject_threads").get(norm).put({
+      threadId: threadId
+    });
+  }
+};
+
 // Initialize SMTP from configuration
 export const initSMTPTransporter = () => {
   const config = getGatewayConfig();
@@ -65,7 +98,10 @@ export const sendSMTPEmail = async (mailData) => {
   }
 
   const config = getGatewayConfig();
-  const { receiverEmail, subject, message, html, attachments, cc, bcc, replyTo } = mailData;
+  const { receiverEmail, subject, message, html, attachments, cc, bcc, replyTo, mailId } = mailData;
+
+  // Generate Message-ID using the local mailId
+  const customMessageId = `<${mailId}@dmail.com>`;
 
   const mailOptions = {
     from: config.smtpFrom || `${config.smtpUser}`,
@@ -76,6 +112,7 @@ export const sendSMTPEmail = async (mailData) => {
     cc: cc || undefined,
     bcc: bcc || undefined,
     replyTo: replyTo || undefined,
+    messageId: customMessageId,
     headers: {
       "X-Mailer": "DMail Hybrid Gateway",
       "X-DMail-Outbound": "true"
@@ -105,8 +142,8 @@ export const sendSMTPEmail = async (mailData) => {
   }
 
   const info = await smtpTransporter.sendMail(mailOptions);
-  console.log(`🚀 [SMTP] Email relayed successfully. Message-ID: ${info.messageId}`);
-  return info;
+  console.log(`🚀 [SMTP] Email relayed successfully. Message-ID: ${info.messageId || customMessageId}`);
+  return info.messageId || customMessageId;
 };
 
 // Upload attachment to Pinata/IPFS from the backend
@@ -135,6 +172,30 @@ const uploadAttachmentToIPFS = async (buffer, filename, mimeType, pinataJwt) => 
 
   const result = await response.json();
   return result.IpfsHash;
+};
+
+// Lookup thread ID by Message-ID
+const findThreadByMessageId = async (gun, msgId) => {
+  if (!msgId) return null;
+  const cleanId = msgId.trim();
+  return new Promise((resolve) => {
+    gun.get("securemail_message_ids").get(cleanId).once((data) => {
+      resolve(data ? data.threadId : null);
+    });
+    setTimeout(() => resolve(null), 1500);
+  });
+};
+
+// Lookup thread ID by Subject
+const findThreadBySubject = async (gun, subject) => {
+  const norm = normalizeSubject(subject);
+  if (!norm) return null;
+  return new Promise((resolve) => {
+    gun.get("securemail_subject_threads").get(norm).once((data) => {
+      resolve(data ? data.threadId : null);
+    });
+    setTimeout(() => resolve(null), 1500);
+  });
 };
 
 // Background IMAP Sync Worker
@@ -215,6 +276,39 @@ export const startIMAPSync = async (gun) => {
 
         console.log(`📩 [IMAP] Syncing new email: ${parsed.subject || "(No Subject)"}`);
 
+        // Thread Resolution
+        let threadId = null;
+
+        // 1. Check In-Reply-To
+        if (parsed.inReplyTo) {
+          threadId = await findThreadByMessageId(gun, parsed.inReplyTo);
+          if (threadId) console.log(`🔗 [Threading] Matched parent Message-ID: ${parsed.inReplyTo} -> Thread: ${threadId}`);
+        }
+
+        // 2. Check References
+        if (!threadId && parsed.references) {
+          const refs = Array.isArray(parsed.references) ? parsed.references : [parsed.references];
+          for (const ref of refs) {
+            threadId = await findThreadByMessageId(gun, ref);
+            if (threadId) {
+              console.log(`🔗 [Threading] Matched references Message-ID: ${ref} -> Thread: ${threadId}`);
+              break;
+            }
+          }
+        }
+
+        // 3. Fallback: Check normalized subject
+        if (!threadId) {
+          threadId = await findThreadBySubject(gun, parsed.subject);
+          if (threadId) console.log(`🔗 [Threading] Matched subject thread: "${parsed.subject}" -> Thread: ${threadId}`);
+        }
+
+        // 4. Default: New thread ID is the mailId itself
+        if (!threadId) {
+          threadId = mailId;
+          console.log(`🔗 [Threading] No match found. Starting new thread: ${threadId}`);
+        }
+
         // Upload attachments to IPFS
         const attachments = [];
         if (parsed.attachments && parsed.attachments.length > 0) {
@@ -246,6 +340,8 @@ export const startIMAPSync = async (gun) => {
         
         const mailObj = {
           id: mailId,
+          threadId: threadId,
+          messageId: messageId,
           senderEmail: senderEmail,
           senderName: senderName,
           receiverEmail: cleanEmail,
@@ -266,9 +362,10 @@ export const startIMAPSync = async (gun) => {
         // Write directly to GunDB
         gun.get("securemail_mails").get(mailId).put(mailObj);
         gun.get(`user_mail_index:${cleanEmail}`).get(mailId).put(mailObj);
-
-        // Also write to sender index so it matches standard GunDB indexing structure
         gun.get(`user_mail_index:${senderEmail.toLowerCase()}`).get(mailId).put(mailObj);
+
+        // Index the incoming message ID and subject for future replies
+        indexOutgoingMessage(messageId, mailId, threadId, cleanEmail, parsed.subject, gun);
 
         console.log(`✅ [IMAP] Synced: ${mailObj.subject} (ID: ${mailId})`);
       }

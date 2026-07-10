@@ -416,6 +416,7 @@ function InboxPageContent() {
         subject: `${replyMode === "reply" ? "Re:" : "Fwd:"} ${currentSelectedMail.subject}`,
         message: replyText,
         attachments: replyAttachments,
+        threadId: currentSelectedMail.threadId || currentSelectedMail.id
       })
 
       setReplyMode(null)

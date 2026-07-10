@@ -14,12 +14,13 @@ interface SendMailParams {
   scheduleTime?: string
   cc?: string
   bcc?: string
+  threadId?: string
 }
 
 /**
  * Dispatches a mail in the background.
  * This function returns immediately after creating a pending entry in the store.
- */
+ * */
 export const sendMailInBackground = async ({
   user,
   recipientEmail: rawRecipient,
@@ -29,14 +30,17 @@ export const sendMailInBackground = async ({
   scheduleDate,
   scheduleTime,
   cc,
-  bcc
+  bcc,
+  threadId: threadIdParam
 }: SendMailParams) => {
   const recipientEmail = rawRecipient.trim().toLowerCase()
   const mailId = `${Date.now()}_${Math.random().toString(36).slice(2)}`
+  const threadId = threadIdParam || mailId
   
   // 1. Create a "Pending" entry in the store so the user sees it in 'Sent' or 'Outbox'
   const pendingMail = {
     id: mailId,
+    threadId: threadId,
     senderEmail: user.email,
     receiverEmail: recipientEmail,
     subject,
@@ -167,7 +171,7 @@ export const sendMailInBackground = async ({
           size: att.size
         }))
 
-        const response = await fetch(`${relayBase}/api/gateway/send-smtp`, {
+        const response = await fetch(`${relayBase}/api/send-external`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -182,7 +186,9 @@ export const sendMailInBackground = async ({
             html: (message + ipfsRefs).replace(/\n/g, "<br>"),
             cc,
             bcc,
-            attachments: attachmentPayload
+            attachments: attachmentPayload,
+            mailId,
+            threadId
           })
         })
 

@@ -5,7 +5,7 @@ import os from "os"
 import dotenv from "dotenv"
 import multer from "multer"
 import { getGatewayConfig, saveGatewayConfig } from "./config_manager.js"
-import { initSMTPTransporter, startIMAPSync, sendSMTPEmail } from "./gateway.js"
+import { initSMTPTransporter, startIMAPSync, sendSMTPEmail, indexOutgoingMessage } from "./imap_sync.js"
 
 dotenv.config()
 
@@ -226,13 +226,13 @@ app.post("/api/gateway/config", verifyUser, async (req, res) => {
   }
 })
 
-// ── POST Gateway Send SMTP ──
-app.post("/api/gateway/send-smtp", verifyUser, async (req, res) => {
-  const { senderEmail, receiverEmail, subject, message, html, attachments, cc, bcc } = req.body
+// ── POST Send External (SMTP Reply & Outbound) ──
+app.post("/api/send-external", verifyUser, async (req, res) => {
+  const { senderEmail, receiverEmail, subject, message, html, attachments, cc, bcc, mailId, threadId } = req.body
 
-  if (!senderEmail || !receiverEmail || !subject || !message) {
+  if (!senderEmail || !receiverEmail || !subject || !message || !mailId || !threadId) {
     return res.status(400).json({
-      error: "Missing required fields (senderEmail, receiverEmail, subject, message).",
+      error: "Missing required fields (senderEmail, receiverEmail, subject, message, mailId, threadId).",
     })
   }
 
@@ -245,11 +245,16 @@ app.post("/api/gateway/send-smtp", verifyUser, async (req, res) => {
       html,
       attachments,
       cc,
-      bcc
+      bcc,
+      mailId
     })
+
+    // Index the outgoing message relation in GunDB for proper threading on replies
+    indexOutgoingMessage(messageId, mailId, threadId, senderEmail, subject, gun)
+
     res.json({ success: true, messageId })
   } catch (err) {
-    console.error("❌ [Gateway Send] SMTP delivery failed:", err.message)
+    console.error("❌ [Send External] SMTP delivery failed:", err.message)
     res.status(500).json({ error: `SMTP relay failed: ${err.message}` })
   }
 })
