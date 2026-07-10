@@ -137,9 +137,7 @@ export const isGunConnected = () => gunConnected || connectedPeers.size > 0
 
 export const checkGunServer = async (): Promise<{ reachable: boolean; url: string; peers?: number; error?: string }> => {
   const count = getGunPeerCount()
-  const currentHost = typeof window !== "undefined" ? window.location.hostname : MASTER_IP
-  const currentProtocol = typeof window !== "undefined" ? window.location.protocol : "http:"
-  const localUrl = `${currentProtocol}//${currentHost}:8765/gun`
+  const localUrl = `${getLocalNode(8765)}/gun`
 
   if (count > 0 || gunConnected) {
     return { reachable: true, url: localUrl, peers: count || 1 }

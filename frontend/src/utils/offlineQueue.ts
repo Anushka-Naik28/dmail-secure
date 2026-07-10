@@ -38,8 +38,13 @@ export const updateRetries = (id: string) => {
 
 const getLocalRelay = () => {
   if (typeof window !== "undefined") {
-    const protocol = window.location.protocol === "https:" ? "https:" : "http:";
-    return `${protocol}//${window.location.hostname}:8765/gun`;
+    const isLocal = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1";
+    if (isLocal) {
+      const protocol = window.location.protocol === "https:" ? "https:" : "http:";
+      return `${protocol}//127.0.0.1:8765/gun`;
+    } else {
+      return `https://dmail-secure.onrender.com/gun`;
+    }
   }
   return "http://localhost:8765/gun";
 };
