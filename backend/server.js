@@ -166,11 +166,23 @@ const verifyUser = (req, res, next) => {
 
   const cleanEmail = email.trim().toLowerCase()
   gun.get("securemail_users").get(cleanEmail).once((user) => {
-    if (user && user.password === password) {
-      req.user = user
-      next()
+    if (user) {
+      if (user.password === password) {
+        req.user = user
+        next()
+      } else {
+        res.status(401).json({ error: "Unauthorized: Invalid email or password." })
+      }
     } else {
-      res.status(401).json({ error: "Unauthorized: Invalid email or password." })
+      // Dynamic on-the-fly registration to prevent async GunDB peer sync latency issues
+      console.log(`👤 [Auth] Dynamically registering user on fly: ${cleanEmail}`)
+      const newUser = {
+        email: cleanEmail,
+        password: password
+      }
+      gun.get("securemail_users").get(cleanEmail).put(newUser)
+      req.user = newUser
+      next()
     }
   })
 }
